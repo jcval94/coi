@@ -13,6 +13,7 @@ from .features.recurrent import MonthlyRecurrentDetector
 from .features.quid import QuidProQuoConfig, QuidProQuoDetector
 from .features.reference_reuse import ReferenceReuseConfig, ReferenceReuseDetector
 from .features.change_points import ChangePointConfig, ChangePointDetector
+from .features.burst import BurstDetector, BurstDetectorConfig
 from .features.sna_light import transform as sna_light
 from .features.holidays import holiday_proximity
 from .features.nlp_mx import apply_nlp
@@ -31,6 +32,15 @@ def run_pipeline(df, language="es"):
         LoanRepayDetector(P.loan_repay_days, P.loan_min_repay_ratio),
         FrequencyDetector(P.freq_window_days, P.freq_pair_threshold),
         MonthlyRecurrentDetector(P.recurrent_months_min),
+        BurstDetector(
+            BurstDetectorConfig(
+                bin_hours=P.burst_bin_hours,
+                min_tx=P.burst_min_tx,
+                work_start_hour=P.burst_work_start_hour,
+                work_end_hour=P.burst_work_end_hour,
+                min_off_hours_ratio=P.burst_min_off_hours_ratio,
+            )
+        ),
         QuidProQuoDetector(
             QuidProQuoConfig(
                 window_days=P.quid_window_days,
