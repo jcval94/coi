@@ -12,6 +12,7 @@ from .features.frequency import FrequencyDetector
 from .features.recurrent import MonthlyRecurrentDetector
 from .features.quid import QuidProQuoConfig, QuidProQuoDetector
 from .features.reference_reuse import ReferenceReuseConfig, ReferenceReuseDetector
+from .features.change_points import ChangePointConfig, ChangePointDetector
 from .features.sna_light import transform as sna_light
 from .features.holidays import holiday_proximity
 from .features.nlp_mx import apply_nlp
@@ -42,6 +43,14 @@ def run_pipeline(df, language="es"):
             ReferenceReuseConfig(
                 window_days=P.ref_reuse_window_days,
                 min_ref_len=P.ref_reuse_min_len,
+            )
+        ),
+        ChangePointDetector(
+            ChangePointConfig(
+                monthly_amount_ratio=P.change_point_amount_ratio,
+                monthly_count_ratio=P.change_point_count_ratio,
+                min_gap_months=P.change_point_min_gap_months,
+                min_history_months=P.change_point_min_history_months,
             )
         ),
     ]:

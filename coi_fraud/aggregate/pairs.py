@@ -19,6 +19,8 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "pct_recurrent",
                 "pct_quid_pro_quo",
                 "pct_reference_reuse",
+                "pct_change_point",
+                "pct_new_edge",
                 "interp_pair",
                 "nlp_par_total_transacciones_sospechosas",
                 "nlp_par_conceptos_sospechosos_unicos",
@@ -28,7 +30,7 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
 
     tmp = df.copy()
     tmp["pair"] = tmp[COL_SENDER_ID].astype(str) + "→" + tmp[COL_RECEIVER_ID].astype(str)
-    for col in ["sig_quid_pro_quo", "sig_reference_reuse"]:
+    for col in ["sig_quid_pro_quo", "sig_reference_reuse", "sig_pair_change_point", "sig_pair_new_edge"]:
         if col not in tmp:
             tmp[col] = 0.0
     agg = (
@@ -44,6 +46,8 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
             pct_recurrent=("sig_recurrent", "mean"),
             pct_quid_pro_quo=("sig_quid_pro_quo", "mean"),
             pct_reference_reuse=("sig_reference_reuse", "mean"),
+            pct_change_point=("sig_pair_change_point", "mean"),
+            pct_new_edge=("sig_pair_new_edge", "mean"),
         )
         .reset_index()
     )

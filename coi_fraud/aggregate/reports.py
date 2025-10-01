@@ -11,6 +11,7 @@ from .persons import build_person_monthly
 from .transactions import build_tx_table
 from .quid import build_quid_tables
 from .reference_reuse import build_reference_reuse_tables
+from .change_points import build_change_point_tables
 
 
 TIME_WINDOWS = {
@@ -53,6 +54,8 @@ def build_all_reports(df: pd.DataFrame):
         "casuistica_quid_pro_quo_par": {},
         "casuistica_referencia_resumen": {},
         "casuistica_referencia_tx": {},
+        "casuistica_cambio_brusco_eventos": {},
+        "casuistica_cambio_brusco_pares": {},
     }
     for label, window in TIME_WINDOWS.items():
         sliced = _slice_timeframe(df, window)
@@ -70,6 +73,9 @@ def build_all_reports(df: pd.DataFrame):
         ref_summary, ref_tx = build_reference_reuse_tables(sliced)
         ref_summary = _tag_timeframe(ref_summary, label)
         ref_tx = _tag_timeframe(ref_tx, label)
+        chg_events, chg_pairs = build_change_point_tables(sliced)
+        chg_events = _tag_timeframe(chg_events, label)
+        chg_pairs = _tag_timeframe(chg_pairs, label)
         outputs["transaccion"][label] = tx
         outputs["persona"][label] = persons
         outputs["par_personas"][label] = pairs
@@ -81,4 +87,6 @@ def build_all_reports(df: pd.DataFrame):
         outputs["casuistica_quid_pro_quo_par"][label] = quid_pairs
         outputs["casuistica_referencia_resumen"][label] = ref_summary
         outputs["casuistica_referencia_tx"][label] = ref_tx
+        outputs["casuistica_cambio_brusco_eventos"][label] = chg_events
+        outputs["casuistica_cambio_brusco_pares"][label] = chg_pairs
     return outputs
