@@ -18,7 +18,7 @@ def _build_components(edges: Iterable[tuple]) -> List[Set]:
         nodes.add(receiver)
     visited: Set = set()
     components: List[Set] = []
-    for node in nodes:
+    for node in sorted(nodes):
         if node in visited:
             continue
         queue = deque([node])
@@ -29,7 +29,8 @@ def _build_components(edges: Iterable[tuple]) -> List[Set]:
                 continue
             visited.add(current)
             comp.add(current)
-            for neighbour in adjacency.get(current, set()):
+            neighbours = sorted(adjacency.get(current, set()))
+            for neighbour in neighbours:
                 if neighbour not in visited:
                     queue.append(neighbour)
         if comp:

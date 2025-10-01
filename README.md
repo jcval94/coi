@@ -1,7 +1,7 @@
 # COI/Fraud mensual + NLP MX + Seaborn Viz + Q&A
 
 ## Requisitos
-- pandas, numpy, seaborn, scikit-learn, scipy (opcional para embeddings)
+- Instalar dependencias con `pip install -r requirements.txt` (incluye pandas, numpy, seaborn, scikit-learn y scipy; estas dos últimas son opcionales si no se entrenan embeddings)
 
 ## Instalación en Google Colab
 1. Conéctate a un cuaderno nuevo y asegúrate de estar usando un entorno con Python 3.10+.
