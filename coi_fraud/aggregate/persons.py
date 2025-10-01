@@ -40,8 +40,15 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "umbral_persona_tasa_flag_cercania",
                 "red_persona_tasa_en_ciclos",
                 "red_persona_tasa_en_triangulos",
+                "quid_pro_quo_persona_tasa_flag",
+                "referencia_persona_tasa_reutilizada",
             ]
         )
+
+    df = df.copy()
+    for col in ["sig_quid_pro_quo", "sig_reference_reuse"]:
+        if col not in df:
+            df[col] = 0.0
 
     em = (
         df.groupby(COL_SENDER_ID, observed=True)
@@ -150,6 +157,8 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
             umbral_persona_tasa_flag_cercania=("sig_near_thr", "mean"),
             red_persona_tasa_en_ciclos=("p1_in_cycle", "mean"),
             red_persona_tasa_en_triangulos=("p1_in_triangle", "mean"),
+            quid_pro_quo_persona_tasa_flag=("sig_quid_pro_quo", "mean"),
+            referencia_persona_tasa_reutilizada=("sig_reference_reuse", "mean"),
         )
         .reset_index()
         .rename(columns={COL_SENDER_ID: "persona"})
@@ -166,6 +175,8 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
         "umbral_persona_tasa_flag_cercania",
         "red_persona_tasa_en_ciclos",
         "red_persona_tasa_en_triangulos",
+        "quid_pro_quo_persona_tasa_flag",
+        "referencia_persona_tasa_reutilizada",
     ]
     for col in fill_cols:
         if col not in people:

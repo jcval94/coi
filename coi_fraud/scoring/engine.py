@@ -18,8 +18,12 @@ def compute_risk(df: pd.DataFrame) -> pd.DataFrame:
     part_rec = df["sig_recurrent"].astype(float) * W["recurrent"]
     part_cyc = ((df.get("p1_in_cycle",False).astype(bool) | df.get("p2_in_cycle",False).astype(bool)).astype(float)) * W["sna_cycle"]
     part_tri = ((df.get("p1_in_triangle",False).astype(bool) | df.get("p2_in_triangle",False).astype(bool)).astype(float)) * W["sna_triangle"]
+    part_quid = df.get("sig_quid_pro_quo", False)
+    part_quid = pd.Series(part_quid, index=df.index).astype(float) * W["quid"]
+    part_ref = df.get("sig_reference_reuse", False)
+    part_ref = pd.Series(part_ref, index=df.index).astype(float) * W["reference_reuse"]
 
     raw = (part_z + part_h + part_nlp + part_rnd + part_thr + part_smf + part_yy +
-           part_loan + part_freq + part_rec + part_cyc + part_tri)
+           part_loan + part_freq + part_rec + part_cyc + part_tri + part_quid + part_ref)
     df["risk_score"] = raw.apply(lambda x: math.log1p(max(float(x),0.0))*1.3).astype(float)
     return df

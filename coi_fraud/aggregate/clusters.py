@@ -72,11 +72,18 @@ def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
                 "umbral_cluster_tasa_flag_cercania",
                 "red_cluster_tasa_en_ciclos",
                 "red_cluster_tasa_en_triangulos",
+                "quid_cluster_tasa_flag",
+                "referencia_cluster_tasa_reutilizada",
                 "desbalance_cluster_persona_principal",
                 "desbalance_cluster_persona_principal_monto",
                 "interp_cluster",
             ]
         )
+
+    df = df.copy()
+    for col in ["sig_quid_pro_quo", "sig_reference_reuse"]:
+        if col not in df:
+            df[col] = 0.0
 
     components = _build_components(zip(df[COL_SENDER_ID], df[COL_RECEIVER_ID]))
     records: List[Dict] = []
@@ -124,19 +131,49 @@ def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
                 cluster_df["sig_recurrent"].fillna(0.0).mean()
             ),
             "prestamo_cluster_tasa_repay_insuficiente": float(
-                cluster_df["sig_loan_bad_repay"].fillna(0.0).mean()
+                cluster_df.get(
+                    "sig_loan_bad_repay", pd.Series(0.0, index=cluster_df.index)
+                )
+                .fillna(0.0)
+                .mean()
             ),
             "monto_cluster_tasa_flag_redondo": float(
-                cluster_df["sig_roundsum"].fillna(0.0).mean()
+                cluster_df.get(
+                    "sig_roundsum", pd.Series(0.0, index=cluster_df.index)
+                )
+                .fillna(0.0)
+                .mean()
             ),
             "umbral_cluster_tasa_flag_cercania": float(
-                cluster_df["sig_near_thr"].fillna(0.0).mean()
+                cluster_df.get("sig_near_thr", pd.Series(0.0, index=cluster_df.index))
+                .fillna(0.0)
+                .mean()
             ),
             "red_cluster_tasa_en_ciclos": float(
-                cluster_df["p1_in_cycle"].fillna(0.0).mean()
+                cluster_df.get("p1_in_cycle", pd.Series(0.0, index=cluster_df.index))
+                .fillna(0.0)
+                .mean()
             ),
             "red_cluster_tasa_en_triangulos": float(
-                cluster_df["p1_in_triangle"].fillna(0.0).mean()
+                cluster_df.get(
+                    "p1_in_triangle", pd.Series(0.0, index=cluster_df.index)
+                )
+                .fillna(0.0)
+                .mean()
+            ),
+            "quid_cluster_tasa_flag": float(
+                cluster_df.get(
+                    "sig_quid_pro_quo", pd.Series(0.0, index=cluster_df.index)
+                )
+                .fillna(0.0)
+                .mean()
+            ),
+            "referencia_cluster_tasa_reutilizada": float(
+                cluster_df.get(
+                    "sig_reference_reuse", pd.Series(0.0, index=cluster_df.index)
+                )
+                .fillna(0.0)
+                .mean()
             ),
             "desbalance_cluster_persona_principal": desbalance_persona,
             "desbalance_cluster_persona_principal_monto": desbalance_monto,
