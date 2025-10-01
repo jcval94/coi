@@ -2,7 +2,7 @@
 # COI/Fraud mensual + NLP MX + Seaborn Viz + Q&A
 
 ## Requisitos
-- pandas, numpy, seaborn, scikit-learn, scipy (opcional para embeddings)
+- Instalar dependencias con `pip install -r requirements.txt` (incluye pandas, numpy, seaborn, scikit-learn y scipy; estas dos últimas son opcionales si no se entrenan embeddings)
 
 ## Uso rápido (Colab)
 ```python
