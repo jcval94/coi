@@ -34,7 +34,7 @@
 ### 1. Pipeline completo con pandas
 ```python
 import pandas as pd
-from coi_fraud import run_pipeline
+from coi_fraud import run_pipeline, generate_diverse_dataset
 
 # Dataset mínimo de ejemplo
 raw = pd.DataFrame(
@@ -110,6 +110,13 @@ reports = run_pipeline(df)
 
 # gráficos
 plots.plot_person_imbalance_bar(reports)
+```
+
+### 5. Generar un dataset de prueba diverso
+```python
+from coi_fraud import generate_diverse_dataset
+
+dataset = generate_diverse_dataset()  # 10 000 filas por defecto
 ```
 
 ## CLI
