@@ -1,0 +1,6 @@
+persona,risk_avg_person,sum_emit,sum_recv,movements,interp_person
+P0180,0.7706798311978479,22629.22,0.0,1.0,"Emite 1 tx ($22,629) y recibe 0 tx ($0); emite más. Riesgo promedio: BAJO."
+P0220,0.7706798311978479,0.0,22629.22,1.0,"Emite 0 tx ($0) y recibe 1 tx ($22,629); recibe más. Riesgo promedio: BAJO."
+P0298,0.7372553376019969,28504.48,0.0,1.0,"Emite 1 tx ($28,504) y recibe 0 tx ($0); emite más. Riesgo promedio: BAJO."
+P0315,0.7372553376019969,0.0,28504.48,1.0,"Emite 0 tx ($0) y recibe 1 tx ($28,504); recibe más. Riesgo promedio: BAJO."
+P0122,0.6640683976748711,18051.49,0.0,1.0,"Emite 1 tx ($18,051) y recibe 0 tx ($0); emite más. Riesgo promedio: BAJO."

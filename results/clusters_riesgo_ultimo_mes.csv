@@ -1,0 +1,6 @@
+cluster_id,cluster_personas_total,cluster_tx_count,cluster_tx_sum,riesgo_cluster_maximo,riesgo_cluster_promedio,interp_cluster
+cluster_3,2,1,18051.49,1.3281367953497423,1.3281367953497423,"2 personas con 1 tx ($18,051). Riesgo max 1.33."
+cluster_4,2,1,6460.41,1.1332523800129282,1.1332523800129282,"2 personas con 1 tx ($6,460). Riesgo max 1.13."
+cluster_5,2,1,28852.65,1.1032224884202084,1.1032224884202084,"2 personas con 1 tx ($28,853). Riesgo max 1.10."
+cluster_6,2,1,33699.88,0.9010913347279289,0.9010913347279289,"2 personas con 1 tx ($33,700). Riesgo max 0.90."
+cluster_1,2,1,18662.86,0.9010913347279289,0.9010913347279289,"2 personas con 1 tx ($18,663). Riesgo max 0.90."

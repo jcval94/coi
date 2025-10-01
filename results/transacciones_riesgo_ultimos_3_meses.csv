@@ -1,0 +1,6 @@
+fecha_hora_ts,user_id,receptor-user_id,movement_amount,risk_score,descripcion,interp_tx
+2025-10-16 13:10:00+00:00,P0180,P0220,22629.22,1.5413596623956958,robotica_colaborativa - turismo_espacial ( ) [relatório preliminar],Principal: nuevo enlace. Nuevo enlace tras 69 meses sin transacciones.
+2025-11-19 17:41:00+00:00,P0298,P0315,28504.48,1.4745106752039938,servicios_financieros; mision_humanitaria; ref ; relatório preliminar,Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 70 meses sin transacciones. NLP: REEMBOLSO_DUDOSO.
+2025-12-19 06:01:00+00:00,P0122,P0137,18051.49,1.3281367953497423,capacitacion; mision_humanitaria; ref ; prueba de concepto,Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 71 meses sin transacciones. Indicadores NLP elevados.
+2025-09-29 15:35:00+00:00,P0256,P0007,11400.98,1.3127422880798414,proveedor_internacional - mision_humanitaria ( ) [sesión híbrida],Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 68 meses sin transacciones. Indicadores NLP elevados.
+2025-11-05 02:55:00+00:00,P0275,P0281,49299.88,1.2721376216139735,compra_tecnologia - criptodonativo ( ) [benchmark ético],Principal: nuevo enlace. Nuevo enlace tras 70 meses sin transacciones.

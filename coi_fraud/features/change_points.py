@@ -61,11 +61,12 @@ class ChangePointDetector:
         prev_count = monthly.groupby(pair_cols)["month_count"].shift(1)
 
         prev_period = monthly.groupby(pair_cols)["month_period"].shift(1)
-        current_ord = monthly["month_period"].astype("int64")
-        prev_ord = prev_period.astype("float64")
+        current_ord = monthly["month_period"].array.asi8.astype("float64")
+        prev_ord = prev_period.array.asi8.astype("float64")
+        prev_ord[pd.isna(prev_period)] = np.nan
         months_since_prev = current_ord - prev_ord
 
-        global_start = monthly["month_period"].min().astype("int64")
+        global_start = float(monthly["month_period"].min().ordinal)
         months_from_start = current_ord - global_start
         first_mask = prev_amount.isna()
         months_since_prev[first_mask] = months_from_start[first_mask]

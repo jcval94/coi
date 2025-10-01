@@ -339,7 +339,14 @@ def _sample_manager_chain(rng: np.random.Generator, pool: Sequence[str], max_dep
 
 
 def _scenario_amount(rng: np.random.Generator) -> float:
-    kind, shape, mean, spread = rng.choice(_SCENARIOS)
+    """Sample an amount based on one of the predefined scenarios."""
+
+    # ``Generator.choice`` intenta vectorizar la selección y, al recibir una
+    # lista de tuplas con tipos heterogéneos, convierte todo el arreglo en
+    # ``numpy.str_``. Eso provoca que ``mean`` y ``spread`` sean cadenas y que
+    # la división falle. Seleccionamos el índice manualmente para conservar los
+    # tipos originales de Python.
+    kind, shape, mean, spread = _SCENARIOS[int(rng.integers(0, len(_SCENARIOS)))]
     scale = mean
     sigma = max(spread / mean, 0.05)
     amount = rng.lognormal(mean=np.log(scale), sigma=sigma)
