@@ -22,8 +22,13 @@ def compute_risk(df: pd.DataFrame) -> pd.DataFrame:
     part_quid = pd.Series(part_quid, index=df.index).astype(float) * W["quid"]
     part_ref = df.get("sig_reference_reuse", False)
     part_ref = pd.Series(part_ref, index=df.index).astype(float) * W["reference_reuse"]
+    part_change = df.get("sig_pair_change_point", False)
+    part_change = pd.Series(part_change, index=df.index).astype(float) * W["change_point"]
+    part_new_edge = df.get("sig_pair_new_edge", False)
+    part_new_edge = pd.Series(part_new_edge, index=df.index).astype(float) * W["new_edge"]
 
     raw = (part_z + part_h + part_nlp + part_rnd + part_thr + part_smf + part_yy +
-           part_loan + part_freq + part_rec + part_cyc + part_tri + part_quid + part_ref)
+           part_loan + part_freq + part_rec + part_cyc + part_tri + part_quid +
+           part_ref + part_change + part_new_edge)
     df["risk_score"] = raw.apply(lambda x: math.log1p(max(float(x),0.0))*1.3).astype(float)
     return df

@@ -42,11 +42,18 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "red_persona_tasa_en_triangulos",
                 "quid_pro_quo_persona_tasa_flag",
                 "referencia_persona_tasa_reutilizada",
+                "cambio_brusco_persona_tasa_flag",
+                "nuevo_enlace_persona_tasa_flag",
             ]
         )
 
     df = df.copy()
-    for col in ["sig_quid_pro_quo", "sig_reference_reuse"]:
+    for col in [
+        "sig_quid_pro_quo",
+        "sig_reference_reuse",
+        "sig_pair_change_point",
+        "sig_pair_new_edge",
+    ]:
         if col not in df:
             df[col] = 0.0
 
@@ -159,6 +166,8 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
             red_persona_tasa_en_triangulos=("p1_in_triangle", "mean"),
             quid_pro_quo_persona_tasa_flag=("sig_quid_pro_quo", "mean"),
             referencia_persona_tasa_reutilizada=("sig_reference_reuse", "mean"),
+            cambio_brusco_persona_tasa_flag=("sig_pair_change_point", "mean"),
+            nuevo_enlace_persona_tasa_flag=("sig_pair_new_edge", "mean"),
         )
         .reset_index()
         .rename(columns={COL_SENDER_ID: "persona"})
@@ -177,6 +186,8 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
         "red_persona_tasa_en_triangulos",
         "quid_pro_quo_persona_tasa_flag",
         "referencia_persona_tasa_reutilizada",
+        "cambio_brusco_persona_tasa_flag",
+        "nuevo_enlace_persona_tasa_flag",
     ]
     for col in fill_cols:
         if col not in people:

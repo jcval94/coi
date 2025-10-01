@@ -21,11 +21,16 @@ class Params:
     quid_near_delta: float = 10.0
     ref_reuse_window_days: int = 30
     ref_reuse_min_len: int = 4
+    change_point_amount_ratio: float = 4.0
+    change_point_count_ratio: float = 3.0
+    change_point_min_gap_months: int = 3
+    change_point_min_history_months: int = 2
 
     weights: Dict[str, float] = field(default_factory=lambda: {
         "zscore": 1.0, "hierarchy": 0.8, "nlp": 0.9, "roundsum": 0.7, "nearthr": 0.9,
         "smurf": 1.3, "yoyo": 1.2, "loan": 1.1, "freq": 0.9, "recurrent": 0.6,
-        "sna_cycle": 1.2, "sna_triangle": 0.7, "quid": 1.4, "reference_reuse": 1.0
+        "sna_cycle": 1.2, "sna_triangle": 0.7, "quid": 1.4, "reference_reuse": 1.0,
+        "change_point": 1.1, "new_edge": 1.0
     })
 
 P = Params()
