@@ -16,7 +16,7 @@ from coi_fraud import run_pipeline
 from coi_fraud.viz import plots
 from coi_fraud.analysis import qa
 
-df = pd.read_csv("/content/mis_transacciones.csv")  # columnas: persona_1, persona_2, relacion, fecha_hora, monto, descripcion
+df = pd.read_csv("/content/mis_transacciones.csv")  # columnas mínimas: user_id, receptor-user_id, load_date, movement_amount, transaction_desc
 reports = run_pipeline(df)
 
 # gráficos
