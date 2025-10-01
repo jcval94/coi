@@ -1,7 +1,22 @@
 import pandas as pd
 
 from ..interpret.person import person_interpretation
-from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_SENDER_ID
+from ..schemas import (
+    COL_AMOUNT,
+    COL_RECEIVER_ID,
+    COL_RECEIVER_TENURE_YEARS,
+    COL_SENDER_ID,
+    COL_SENDER_TENURE_YEARS,
+)
+
+
+CASE13_NEW_EMPLOYEE_YEARS = 0.5
+CASE13_MIN_HIGH_TX = 2
+CASE13_MIN_UNIQUE_SENDERS = 3
+CASE14_NEW_EMPLOYEE_YEARS = 0.5
+CASE14_OLD_EMPLOYEE_YEARS = 5.0
+CASE14_MIN_TX = 5
+CASE14_MIN_UNIQUE_SENDERS = 3
 
 
 def _ensure_string(series: pd.Series) -> pd.Series:
@@ -15,6 +30,139 @@ def _safe_zscore(series: pd.Series) -> pd.Series:
     if pd.isna(std) or std == 0:
         return pd.Series(0.0, index=values.index, dtype="float64")
     return (values - mean) / std
+
+
+def _prepare_case_base(df: pd.DataFrame) -> pd.DataFrame:
+    needed = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        COL_AMOUNT,
+        COL_SENDER_TENURE_YEARS,
+        COL_RECEIVER_TENURE_YEARS,
+    ]
+    missing = [col for col in needed if col not in df.columns]
+    if missing:
+        return pd.DataFrame(columns=needed)
+    base = df[needed].copy()
+    base[COL_AMOUNT] = pd.to_numeric(base[COL_AMOUNT], errors="coerce")
+    base[COL_SENDER_TENURE_YEARS] = pd.to_numeric(
+        base[COL_SENDER_TENURE_YEARS], errors="coerce"
+    )
+    base[COL_RECEIVER_TENURE_YEARS] = pd.to_numeric(
+        base[COL_RECEIVER_TENURE_YEARS], errors="coerce"
+    )
+    base = base.dropna(subset=[COL_AMOUNT])
+    return base
+
+
+def _compute_case13_new_receivers(df: pd.DataFrame) -> pd.DataFrame:
+    base = _prepare_case_base(df)
+    if base.empty:
+        return pd.DataFrame(
+            columns=[
+                "persona",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "caso13_persona_flag_nuevo_receptor_altos_montos",
+            ]
+        )
+
+    amounts = base[COL_AMOUNT].dropna()
+    if amounts.empty:
+        high_amount_thr = float("inf")
+    else:
+        high_amount_thr = float(amounts.quantile(0.9))
+
+    base["is_high_amount"] = base[COL_AMOUNT] >= high_amount_thr
+    new_receivers = base[
+        base[COL_RECEIVER_TENURE_YEARS].fillna(float("inf")) <= CASE13_NEW_EMPLOYEE_YEARS
+    ]
+    if new_receivers.empty:
+        return pd.DataFrame(
+            columns=[
+                "persona",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "caso13_persona_flag_nuevo_receptor_altos_montos",
+            ]
+        )
+
+    agg = (
+        new_receivers.groupby(COL_RECEIVER_ID, observed=True)
+        .agg(
+            caso13_persona_tx_recibidas=(COL_AMOUNT, "count"),
+            caso13_persona_monto_total=(COL_AMOUNT, "sum"),
+            caso13_persona_emisores_unicos=(COL_SENDER_ID, "nunique"),
+            caso13_persona_tx_altos=("is_high_amount", "sum"),
+            caso13_persona_monto_promedio=(COL_AMOUNT, "mean"),
+        )
+        .reset_index()
+        .rename(columns={COL_RECEIVER_ID: "persona"})
+    )
+
+    agg["caso13_persona_flag_nuevo_receptor_altos_montos"] = (
+        (agg["caso13_persona_emisores_unicos"] >= CASE13_MIN_UNIQUE_SENDERS)
+        & (agg["caso13_persona_tx_altos"] >= CASE13_MIN_HIGH_TX)
+    ).astype(int)
+    return agg
+
+
+def _compute_case14_old_receivers(df: pd.DataFrame) -> pd.DataFrame:
+    base = _prepare_case_base(df)
+    if base.empty:
+        return pd.DataFrame(
+            columns=[
+                "persona",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_flag_antiguo_recibe_de_nuevos",
+            ]
+        )
+
+    mask = (
+        base[COL_SENDER_TENURE_YEARS].fillna(float("inf")) <= CASE14_NEW_EMPLOYEE_YEARS
+    ) & (
+        base[COL_RECEIVER_TENURE_YEARS].fillna(-float("inf"))
+        >= CASE14_OLD_EMPLOYEE_YEARS
+    )
+    filtered = base.loc[mask].copy()
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "persona",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_flag_antiguo_recibe_de_nuevos",
+            ]
+        )
+
+    agg = (
+        filtered.groupby(COL_RECEIVER_ID, observed=True)
+        .agg(
+            caso14_persona_tx_de_emisores_nuevos=(COL_AMOUNT, "count"),
+            caso14_persona_monto_de_emisores_nuevos=(COL_AMOUNT, "sum"),
+            caso14_persona_emisores_nuevos_unicos=(COL_SENDER_ID, "nunique"),
+            caso14_persona_monto_promedio_de_emisores_nuevos=(COL_AMOUNT, "mean"),
+        )
+        .reset_index()
+        .rename(columns={COL_RECEIVER_ID: "persona"})
+    )
+
+    agg["caso14_persona_flag_antiguo_recibe_de_nuevos"] = (
+        (agg["caso14_persona_emisores_nuevos_unicos"] >= CASE14_MIN_UNIQUE_SENDERS)
+        & (agg["caso14_persona_tx_de_emisores_nuevos"] >= CASE14_MIN_TX)
+    ).astype(int)
+    return agg
 
 
 def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
@@ -61,6 +209,17 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "referencia_persona_tasa_reutilizada",
                 "cambio_brusco_persona_tasa_flag",
                 "nuevo_enlace_persona_tasa_flag",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "caso13_persona_flag_nuevo_receptor_altos_montos",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_flag_antiguo_recibe_de_nuevos",
             ]
         )
 
@@ -317,6 +476,31 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
     people["desbalance_persona_tasa_meses_recibe_extremo"] = (
         people["desbalance_persona_tasa_meses_recibe_extremo"].fillna(0.0).astype(float)
     )
+
+    case13 = _compute_case13_new_receivers(df)
+    if not case13.empty:
+        people = people.merge(case13, on="persona", how="left")
+    case14 = _compute_case14_old_receivers(df)
+    if not case14.empty:
+        people = people.merge(case14, on="persona", how="left")
+
+    for col, fill_value in [
+        ("caso13_persona_tx_recibidas", 0),
+        ("caso13_persona_monto_total", 0.0),
+        ("caso13_persona_emisores_unicos", 0),
+        ("caso13_persona_tx_altos", 0),
+        ("caso13_persona_monto_promedio", 0.0),
+        ("caso13_persona_flag_nuevo_receptor_altos_montos", 0),
+        ("caso14_persona_tx_de_emisores_nuevos", 0),
+        ("caso14_persona_monto_de_emisores_nuevos", 0.0),
+        ("caso14_persona_emisores_nuevos_unicos", 0),
+        ("caso14_persona_monto_promedio_de_emisores_nuevos", 0.0),
+        ("caso14_persona_flag_antiguo_recibe_de_nuevos", 0),
+    ]:
+        if col not in people:
+            people[col] = fill_value
+        else:
+            people[col] = people[col].fillna(fill_value)
 
     if "nlp_persona_top_conceptos" in people:
         people["top_conceptos"] = people["nlp_persona_top_conceptos"]

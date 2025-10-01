@@ -1,7 +1,77 @@
 import pandas as pd
 
 from ..interpret.pair import pair_interpretation
-from ..schemas import COL_AMOUNT, COL_SENDER_ID
+from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_RELATION, COL_SENDER_ID
+
+
+CASE12_MIN_TX = 3
+CASE12_OFUSCATED_TOL_RATIO = 0.03
+
+
+def _compute_case12_tandas(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "pair",
+                "caso12_par_tanda_tx_count",
+                "caso12_par_tanda_monto_promedio",
+                "caso12_par_tanda_no_ofuscada_flag",
+                "caso12_par_tanda_ofuscada_flag",
+            ]
+        )
+
+    teammates = df[df[COL_RELATION] == "companero_equipo"].copy()
+    if teammates.empty:
+        return pd.DataFrame(
+            columns=[
+                "pair",
+                "caso12_par_tanda_tx_count",
+                "caso12_par_tanda_monto_promedio",
+                "caso12_par_tanda_no_ofuscada_flag",
+                "caso12_par_tanda_ofuscada_flag",
+            ]
+        )
+
+    teammates["pair"] = (
+        teammates[COL_SENDER_ID].astype(str) + "→" + teammates[COL_RECEIVER_ID].astype(str)
+    )
+    grouped = teammates.groupby("pair", observed=True)[COL_AMOUNT]
+
+    summary = grouped.agg(
+        caso12_par_tanda_tx_count="count",
+        _unique_amounts=pd.Series.nunique,
+        caso12_par_tanda_monto_promedio="mean",
+        _min="min",
+        _max="max",
+    ).reset_index()
+
+    summary["caso12_par_tanda_monto_promedio"] = (
+        summary["caso12_par_tanda_monto_promedio"].astype(float).fillna(0.0)
+    )
+    summary["_range"] = summary["_max"] - summary["_min"]
+
+    summary["caso12_par_tanda_no_ofuscada_flag"] = (
+        (summary["caso12_par_tanda_tx_count"] >= CASE12_MIN_TX)
+        & (summary["_unique_amounts"] == 1)
+    ).astype(int)
+
+    tolerance = (
+        summary["caso12_par_tanda_monto_promedio"].abs() * CASE12_OFUSCATED_TOL_RATIO
+    ).clip(lower=0.0)
+    summary["caso12_par_tanda_ofuscada_flag"] = (
+        (summary["caso12_par_tanda_tx_count"] >= CASE12_MIN_TX)
+        & (summary["_unique_amounts"] > 1)
+        & (summary["_range"].fillna(0.0) <= tolerance.fillna(0.0))
+    ).astype(int)
+
+    cols = [
+        "pair",
+        "caso12_par_tanda_tx_count",
+        "caso12_par_tanda_monto_promedio",
+        "caso12_par_tanda_no_ofuscada_flag",
+        "caso12_par_tanda_ofuscada_flag",
+    ]
+    return summary[cols]
 
 
 def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
@@ -97,6 +167,19 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
         agg["nlp_par_top_conceptos"] = agg["nlp_par_top_conceptos"].apply(
             lambda x: x if isinstance(x, list) else []
         )
+
+    case12 = _compute_case12_tandas(df)
+    agg = agg.merge(case12, on="pair", how="left")
+    for col, fill_value in [
+        ("caso12_par_tanda_tx_count", 0),
+        ("caso12_par_tanda_monto_promedio", 0.0),
+        ("caso12_par_tanda_no_ofuscada_flag", 0),
+        ("caso12_par_tanda_ofuscada_flag", 0),
+    ]:
+        if col not in agg:
+            agg[col] = fill_value
+        else:
+            agg[col] = agg[col].fillna(fill_value)
 
     agg["interp_pair"] = agg.apply(pair_interpretation, axis=1)
     agg = agg.sort_values(["risk_max", "tx_sum"], ascending=[False, False])
