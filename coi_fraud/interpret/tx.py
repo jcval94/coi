@@ -14,8 +14,17 @@ def tx_interpretation(r):
     if bool(r.get("sig_near_thr", False)): msgs.append("Cerca de umbral.")
     if bool(r.get("p1_in_cycle", False)) or bool(r.get("p2_in_cycle", False)): msgs.append("Ciclo de fondos.")
     elif bool(r.get("p1_in_triangle", False)) or bool(r.get("p2_in_triangle", False)): msgs.append("Triángulos en red.")
+    if bool(r.get("sig_quid_pro_quo", False)):
+        score = float(r.get("feat_quid_score", 0) or 0)
+        msgs.append(f"Posible quid-pro-quo (score≈{score:.2f}).")
+    if bool(r.get("sig_reference_reuse", False)):
+        msgs.append("Referencia reutilizada entre pares.")
     if r.get("nlp_concepto_sospechoso"): msgs.append(f"NLP: {r['nlp_concepto_sospechoso']}.")
     if (r.get("feat_nlp_vaguedad",0)>0.7) or (r.get("feat_nlp_emocion",0)>0): msgs.append("Descripción vaga/emocional.")
     parts=[("z",float(max(r.get("feat_zscore_monto",0),0))),("hier",0.8 if "Manager" in str(r.get("relacion","")) else 0.0),("nlp",float(r.get("feat_nlp_risk_points",0)))]
+    if bool(r.get("sig_quid_pro_quo", False)):
+        parts.append(("quid", float(r.get("feat_quid_score", 0) or 0)))
+    if bool(r.get("sig_reference_reuse", False)):
+        parts.append(("ref", 1.0))
     top = [k for k,_ in sorted(parts, key=lambda kv: kv[1], reverse=True)[:3]]
     return f"Principal: {' + '.join(top)}. " + " ".join(msgs[:4])

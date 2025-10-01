@@ -9,6 +9,8 @@ from .concepts import build_concept_tables
 from .pairs import build_pair_monthly
 from .persons import build_person_monthly
 from .transactions import build_tx_table
+from .quid import build_quid_tables
+from .reference_reuse import build_reference_reuse_tables
 
 
 TIME_WINDOWS = {
@@ -47,6 +49,10 @@ def build_all_reports(df: pd.DataFrame):
         "persona_concepto": {},
         "par_concepto": {},
         "clusters_personas": {},
+        "casuistica_quid_pro_quo_tx": {},
+        "casuistica_quid_pro_quo_par": {},
+        "casuistica_referencia_resumen": {},
+        "casuistica_referencia_tx": {},
     }
     for label, window in TIME_WINDOWS.items():
         sliced = _slice_timeframe(df, window)
@@ -58,6 +64,12 @@ def build_all_reports(df: pd.DataFrame):
         persona_concepto = _tag_timeframe(persona_concepto, label)
         par_concepto = _tag_timeframe(par_concepto, label)
         clusters = _tag_timeframe(build_person_clusters(sliced), label)
+        quid_tx, quid_pairs = build_quid_tables(sliced)
+        quid_tx = _tag_timeframe(quid_tx, label)
+        quid_pairs = _tag_timeframe(quid_pairs, label)
+        ref_summary, ref_tx = build_reference_reuse_tables(sliced)
+        ref_summary = _tag_timeframe(ref_summary, label)
+        ref_tx = _tag_timeframe(ref_tx, label)
         outputs["transaccion"][label] = tx
         outputs["persona"][label] = persons
         outputs["par_personas"][label] = pairs
@@ -65,4 +77,8 @@ def build_all_reports(df: pd.DataFrame):
         outputs["persona_concepto"][label] = persona_concepto
         outputs["par_concepto"][label] = par_concepto
         outputs["clusters_personas"][label] = clusters
+        outputs["casuistica_quid_pro_quo_tx"][label] = quid_tx
+        outputs["casuistica_quid_pro_quo_par"][label] = quid_pairs
+        outputs["casuistica_referencia_resumen"][label] = ref_summary
+        outputs["casuistica_referencia_tx"][label] = ref_tx
     return outputs
