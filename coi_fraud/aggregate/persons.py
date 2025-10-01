@@ -8,6 +8,15 @@ def _ensure_string(series: pd.Series) -> pd.Series:
     return series.fillna("").astype("string").str.strip()
 
 
+def _safe_zscore(series: pd.Series) -> pd.Series:
+    values = series.astype(float)
+    mean = values.mean()
+    std = values.std(ddof=0)
+    if pd.isna(std) or std == 0:
+        return pd.Series(0.0, index=values.index, dtype="float64")
+    return (values - mean) / std
+
+
 def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(
@@ -31,6 +40,14 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "nlp_persona_top_conceptos",
                 "desbalance_persona_monto_neto",
                 "desbalance_persona_ratio_emision_vs_recepcion",
+                "desbalance_persona_zscore_emision_total",
+                "desbalance_persona_zscore_recepcion_total",
+                "desbalance_persona_zscore_neto_total",
+                "desbalance_persona_meses_totales",
+                "desbalance_persona_meses_envia_extremo",
+                "desbalance_persona_meses_recibe_extremo",
+                "desbalance_persona_tasa_meses_envia_extremo",
+                "desbalance_persona_tasa_meses_recibe_extremo",
                 "yo_yo_persona_tasa_flag_emisor",
                 "smurf_persona_tasa_flag_emisor",
                 "frecuencia_persona_tasa_flag_emisor",
@@ -199,6 +216,106 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
     total_mov = people["sum_emit"] + people["sum_recv"]
     people["desbalance_persona_ratio_emision_vs_recepcion"] = (
         people["sum_emit"].where(total_mov == 0, people["sum_emit"] / total_mov)
+    )
+    people["desbalance_persona_zscore_emision_total"] = _safe_zscore(people["sum_emit"])
+    people["desbalance_persona_zscore_recepcion_total"] = _safe_zscore(people["sum_recv"])
+    people["desbalance_persona_zscore_neto_total"] = _safe_zscore(
+        people["desbalance_persona_monto_neto"]
+    )
+
+    monthly_cols = [
+        "desbalance_persona_meses_totales",
+        "desbalance_persona_meses_envia_extremo",
+        "desbalance_persona_meses_recibe_extremo",
+        "desbalance_persona_tasa_meses_envia_extremo",
+        "desbalance_persona_tasa_meses_recibe_extremo",
+    ]
+    if "month_id" in df.columns:
+        em_month = (
+            df.groupby(["month_id", COL_SENDER_ID], observed=True)
+            .agg(
+                sum_emit_mes=(COL_AMOUNT, "sum"),
+                n_tx_emit_mes=(COL_AMOUNT, "count"),
+            )
+            .reset_index()
+            .rename(columns={COL_SENDER_ID: "persona"})
+        )
+        re_month = (
+            df.groupby(["month_id", COL_RECEIVER_ID], observed=True)
+            .agg(
+                sum_recv_mes=(COL_AMOUNT, "sum"),
+                n_tx_recv_mes=(COL_AMOUNT, "count"),
+            )
+            .reset_index()
+            .rename(columns={COL_RECEIVER_ID: "persona"})
+        )
+        monthly = em_month.merge(re_month, on=["month_id", "persona"], how="outer").fillna(
+            {
+                "sum_emit_mes": 0.0,
+                "n_tx_emit_mes": 0,
+                "sum_recv_mes": 0.0,
+                "n_tx_recv_mes": 0,
+            }
+        )
+        monthly = monthly[
+            (monthly["n_tx_emit_mes"] > 0) | (monthly["n_tx_recv_mes"] > 0)
+        ].copy()
+        if not monthly.empty:
+            monthly["desbalance_mes_neto"] = (
+                monthly["sum_emit_mes"] - monthly["sum_recv_mes"]
+            )
+            monthly["z_emit_mes"] = monthly.groupby("month_id", observed=True)[
+                "sum_emit_mes"
+            ].transform(_safe_zscore)
+            monthly["z_recv_mes"] = monthly.groupby("month_id", observed=True)[
+                "sum_recv_mes"
+            ].transform(_safe_zscore)
+            monthly["z_neto_mes"] = monthly.groupby("month_id", observed=True)[
+                "desbalance_mes_neto"
+            ].transform(_safe_zscore)
+            monthly["flag_envia_extremo"] = (
+                (monthly["desbalance_mes_neto"] > 0)
+                & (monthly["z_neto_mes"].abs() >= 2.0)
+            )
+            monthly["flag_recibe_extremo"] = (
+                (monthly["desbalance_mes_neto"] < 0)
+                & (monthly["z_neto_mes"].abs() >= 2.0)
+            )
+            monthly_stats = (
+                monthly.groupby("persona", observed=True)
+                .agg(
+                    desbalance_persona_meses_totales=("month_id", "nunique"),
+                    desbalance_persona_meses_envia_extremo=("flag_envia_extremo", "sum"),
+                    desbalance_persona_meses_recibe_extremo=("flag_recibe_extremo", "sum"),
+                )
+                .reset_index()
+            )
+            monthly_stats["desbalance_persona_tasa_meses_envia_extremo"] = (
+                monthly_stats["desbalance_persona_meses_envia_extremo"]
+                / monthly_stats["desbalance_persona_meses_totales"].replace({0: pd.NA})
+            ).fillna(0.0)
+            monthly_stats["desbalance_persona_tasa_meses_recibe_extremo"] = (
+                monthly_stats["desbalance_persona_meses_recibe_extremo"]
+                / monthly_stats["desbalance_persona_meses_totales"].replace({0: pd.NA})
+            ).fillna(0.0)
+            people = people.merge(monthly_stats, on="persona", how="left")
+    for col in monthly_cols:
+        if col not in people:
+            people[col] = 0
+    people["desbalance_persona_meses_totales"] = (
+        people["desbalance_persona_meses_totales"].fillna(0).astype("Int64")
+    )
+    people["desbalance_persona_meses_envia_extremo"] = (
+        people["desbalance_persona_meses_envia_extremo"].fillna(0).astype("Int64")
+    )
+    people["desbalance_persona_meses_recibe_extremo"] = (
+        people["desbalance_persona_meses_recibe_extremo"].fillna(0).astype("Int64")
+    )
+    people["desbalance_persona_tasa_meses_envia_extremo"] = (
+        people["desbalance_persona_tasa_meses_envia_extremo"].fillna(0.0).astype(float)
+    )
+    people["desbalance_persona_tasa_meses_recibe_extremo"] = (
+        people["desbalance_persona_tasa_meses_recibe_extremo"].fillna(0.0).astype(float)
     )
 
     if "nlp_persona_top_conceptos" in people:

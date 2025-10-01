@@ -13,6 +13,11 @@ class Params:
     freq_window_days: int = 30
     freq_pair_threshold: int = 5
     recurrent_months_min: int = 3
+    burst_bin_hours: int = 2
+    burst_min_tx: int = 5
+    burst_work_start_hour: int = 8
+    burst_work_end_hour: int = 20
+    burst_min_off_hours_ratio: float = 0.6
     near_thresholds: List[float] = field(default_factory=lambda: [500, 1000, 2000, 5000, 10000])
     near_delta: float = 10.0
     round_bases: List[int] = field(default_factory=lambda: [10, 50, 100, 500, 1000])

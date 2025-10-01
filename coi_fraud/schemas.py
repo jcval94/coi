@@ -4,6 +4,7 @@ COL_RELATION = "relacion"
 COL_DATETIME = "fecha_hora"
 COL_AMOUNT = "movement_amount"
 COL_DESCRIPTION = "descripcion"
+COL_ORIGIN_APP = "origin_application_id"
 
 COL_SENDER_FULL_NAME = "user_nombre_completo"
 COL_RECEIVER_FULL_NAME = "receptor_nombre_completo"
@@ -82,4 +83,17 @@ TX_COLS_EXPORT = [
     "feat_nlp_risk_points",
     "feat_nlp_vaguedad",
     "feat_nlp_emocion",
+    COL_ORIGIN_APP,
+    "rafaga_canal_id",
+    "rafaga_canal_hora_bin_inicio",
+    "rafaga_canal_hora_bin_fin",
+    "rafaga_canal_hora_label",
+    "rafaga_canal_tx_en_bin",
+    "rafaga_canal_tx_fuera_horario",
+    "rafaga_canal_ratio_fuera_horario",
+    "rafaga_canal_personas_emisoras",
+    "rafaga_canal_personas_receptoras",
+    "rafaga_canal_monto_total",
+    "rafaga_canal_flag_evento",
+    "rafaga_canal_flag_fuera_horario",
 ]

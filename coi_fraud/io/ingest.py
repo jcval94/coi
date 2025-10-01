@@ -119,6 +119,13 @@ def ingest_df(df: pd.DataFrame) -> pd.DataFrame:
     _ensure_columns(df, raw_required)
     df = df.copy()
 
+    origin_col = "origin_application_id"
+    if origin_col in df.columns:
+        df[origin_col] = df[origin_col].astype("string").str.strip()
+        df[origin_col] = df[origin_col].replace({"": pd.NA})
+    else:
+        df[origin_col] = pd.NA
+
     df[COL_AMOUNT] = pd.to_numeric(df[COL_AMOUNT], errors="coerce")
     df[COL_DATETIME] = _parse_load_datetime(df[LOAD_DATE_COL])
 
