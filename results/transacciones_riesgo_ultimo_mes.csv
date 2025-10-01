@@ -1,0 +1,6 @@
+fecha_hora_ts,user_id,receptor-user_id,movement_amount,risk_score,descripcion,interp_tx
+2025-12-19 06:01:00+00:00,P0122,P0137,18051.49,1.3281367953497423,capacitacion; mision_humanitaria; ref ; prueba de concepto,Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 71 meses sin transacciones. Indicadores NLP elevados.
+2025-12-12 10:22:00+00:00,P0256,P0162,6460.41,1.1332523800129282,bono_excepcional; derechos_digitales; ref ; due diligence,Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 71 meses sin transacciones. NLP: NOMINA_PARALELA.
+2025-12-25 05:49:00+00:00,P0208,P0317,28852.65,1.1032224884202084,material_medico - alianza_gobierno_abierto ( ) [sesión híbrida],Principal: nuevo enlace + texto riesgoso. Nuevo enlace tras 71 meses sin transacciones. NLP: REEMBOLSO_DUDOSO.
+2025-12-10 10:13:00+00:00,P0001,P0055,18662.86,0.9010913347279289,investigacion_ux - fondo_empoderamiento ( ) [relatório preliminar],Principal: nuevo enlace. Nuevo enlace tras 71 meses sin transacciones.
+2025-12-15 06:10:00+00:00,P0067,P0174,5896.06,0.9010913347279289,proveedor_internacional; laboratorio-biotecnologia; ref ; benchmark ético,Principal: nuevo enlace. Nuevo enlace tras 71 meses sin transacciones.

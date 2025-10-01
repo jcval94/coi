@@ -106,12 +106,21 @@ def nlp_mx_etiquetar_transacciones_pro(
         return float(min(1.0, max(0.0, v)))
 
     def fuzzy_contains(haystack: str, needle: str, thresh=0.86) -> bool:
-        if " " in needle and needle in haystack: return True
-        if len(needle) < 4: return needle in haystack
-        for m in re.finditer(r"[a-z0-9][a-z0-9\\s]{0,%d}" % max(3, len(needle)+6), haystack):
+        if " " in needle and needle in haystack:
+            return True
+        if len(needle) < 4:
+            return needle in haystack
+        max_window = max(3, len(needle) + 6)
+        for idx, m in enumerate(
+            re.finditer(r"[a-z0-9][a-z0-9\s]{0,%d}" % max_window, haystack)
+        ):
+            if idx >= 50:
+                break
             seg = m.group(0)
-            if SequenceMatcher(None, seg[:len(needle)+3], needle).ratio() >= thresh:
+            if SequenceMatcher(None, seg[: len(needle) + 3], needle).ratio() >= thresh:
                 return True
+        if len(haystack) > 600:
+            haystack = haystack[:600]
         return SequenceMatcher(None, haystack, needle).ratio() >= (thresh + 0.03)
 
     FAC_EVENT = re.compile(r"(agiliz|destrab|desator|prioridad|darle salida|liber|gesti[oó]n|tramite|tr[aá]mite|fast[- ]?track|greenlight|palomear)")
