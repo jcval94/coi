@@ -3008,12 +3008,15 @@ def question15_coordinated_cluster_signals(
 
     Metodología
     -----------
-    1. Extrae indicadores de señales (yo-yo, smurfing, ciclos, quid y
+    1. Forma clusters como componentes conexas del grafo de transacciones,
+       uniendo personas enlazadas por pagos directos o a través de terceros.
+    2. Extrae indicadores de señales (yo-yo, smurfing, ciclos, quid y
        referencia reutilizada) junto con métricas de tamaño, montos y riesgo.
-    2. Calcula cuántas señales activas tiene cada cluster y normaliza montos y
+    3. Calcula cuántas señales activas tiene cada cluster y normaliza montos y
        conteos para ordenar la prioridad.
-    3. Describe la persona más desbalanceada y el detalle porcentual de cada
-       señal en la interpretabilidad.
+    4. Describe la persona más desbalanceada, explica cómo se construye el
+       cluster y resume el detalle porcentual de cada señal en la
+       interpretabilidad.
 
     Returns
     -------
@@ -3153,6 +3156,10 @@ def question15_coordinated_cluster_signals(
             f"{_format_float(row.get('cluster_tx_sum', 0))} y riesgo máximo "
             f"{row.get('riesgo_cluster_maximo', 0):.2f}. Se activan "
             f"{int(row.get('signals_activas', 0))} de las 5 señales priorizadas ({row.get('signals_detalle', 'sin detalle')}). "
+            "El cluster se construye como una componente conexa del grafo de pagos, "
+            "por lo que todas las personas están enlazadas directa o indirectamente. "
+            "Las tasas de cada señal indican el porcentaje de transacciones dentro "
+            "del grupo con ese comportamiento coordinado. "
             f"La persona más desbalanceada {_balance_text(row)}."
         ),
         axis=1,
