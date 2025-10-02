@@ -24,6 +24,11 @@ from coi_fraud.schemas import (
     COL_RELATION,
     COL_SENDER_ID,
 )
+from coi_fraud.text_utils import (
+    clean_raw_concept,
+    first_non_empty_series,
+    normalize_clean_concept,
+)
 
 
 DEFAULT_TIMEFRAME = "todo_el_tiempo"
@@ -45,14 +50,18 @@ NLP_CATEGORIES = (
     "REEMBOLSO_DUDOSO",
     "PRESTAMO",
     "COI_RELACIONAL",
+    "AGASAJOS_SOCIALES",
+    "DETALLE_PERSONAL",
+    "COORDINACION_REITERADA",
+    "ALUSION_INDIRECTA",
 )
 NLP_CATEGORY_SYNONYMS = {
     "SOBORNO": ("SOBOR", "COIMA", "BRIBE", "COHECHO", "SWEETENER"),
     "FACILITACIÓN": ("FACILIT", "FACILITATION", "GRATIFICACIÓN", "FAST TRACK", "PRIORIDAD"),
     "OFUSCACIÓN": ("OFUSC", "OBFUS", "OCULT", "ENCUBR", "SIN FACTURA"),
-    "EXTORSIÓN": ("EXTORS", "EXTORT", "AMENAZ", "DERECHO DE PISO"),
-    "FAVORES SEXUALES": ("SEXUAL", "SEX", "ACOSO", "PRIVADO", "INTIMO"),
-    "REGALOS_LUJO": ("REGALO", "LUJO", "VIP", "PREMIUM", "SUITE"),
+    "EXTORSIÓN": ("EXTORS", "EXTORT", "AMENAZ", "DERECHO DE PISO", "COPERACION"),
+    "FAVORES SEXUALES": ("SEXUAL", "SEX", "ACOSO", "PRIVADO", "INTIMO", "TANGA", "TANGAS", "LENCER"),
+    "REGALOS_LUJO": ("REGALO", "LUJO", "VIP", "PREMIUM", "SUITE", "DETALLAZO"),
     "CONFLICTO_INTERES_FAMILIAR": ("FAMILIA", "PARENTE", "PAREJA", "ESPOS", "HIJO"),
     "VIATICOS_LUJOSOS": ("VIATIC", "HOTEL", "BUSINESS", "PRIMERA", "CINCO ESTRELLAS"),
     "FACTURACION_SIMULADA": ("FACTURA", "FANTASMA", "SIMULAD", "FACHADA"),
@@ -63,6 +72,10 @@ NLP_CATEGORY_SYNONYMS = {
     "REEMBOLSO_DUDOSO": ("REEMBOLSO", "VIÁTICO", "GASTO", "VARIOS"),
     "PRESTAMO": ("PRÉSTAM", "ADELAN", "ABONO", "ANTICIPO"),
     "COI_RELACIONAL": ("COMPADRE", "PRIMO", "FAMIL", "AMIGO"),
+    "AGASAJOS_SOCIALES": ("CERVEZA", "CHELA", "FIESTA", "TRAGO", "AFTER", "ANTRO", "KARAOKE"),
+    "DETALLE_PERSONAL": ("DETALLE", "DETALLITO", "REGALITO", "TE COMPRO", "TECOMPRA", "REGLO"),
+    "COORDINACION_REITERADA": ("LO DE AYER", "MISMA JUGADA", "MISMO TRATO", "COMO QUEDAMOS"),
+    "ALUSION_INDIRECTA": ("YA SABES", "LO PENDIENTE", "AQUELLO", "LO HABLADO"),
 }
 CONCEPT_SPLIT_PATTERN = re.compile(r"[\s,;|/]+")
 
@@ -200,6 +213,72 @@ def _tokenize_concepts(value: Any) -> Iterable[str]:
     return [token for token in tokens if token]
 
 
+def _combine_unique_texts(values: Iterable[Any]) -> str:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        if text not in seen:
+            seen.add(text)
+            ordered.append(text)
+    return "; ".join(ordered)
+
+
+def _max_text_length(values: Iterable[Any]) -> int:
+    lengths = []
+    for value in values:
+        if value in (None, "", pd.NA):
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        lengths.append(len(text))
+    return max(lengths, default=0)
+
+
+def _most_common_text(values: Iterable[Any]) -> str:
+    counts: dict[str, int] = {}
+    top_text = ""
+    top_count = 0
+    for value in values:
+        if value in (None, "", pd.NA):
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        counts[text] = counts.get(text, 0) + 1
+        if counts[text] > top_count or (counts[text] == top_count and len(text) > len(top_text)):
+            top_text = text
+            top_count = counts[text]
+    return top_text
+
+
+def _ensure_raw_concept_column(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    work = df.copy()
+    source = first_non_empty_series(
+        work,
+        [
+            "nlp_concepto_crudo",
+            "reference_number_trans_desc",
+            COL_DESCRIPTION,
+            "tx_tags",
+            "feat_reference_norm",
+            "reference_norm",
+            "nlp_concepto_sospechoso",
+        ],
+    )
+    if source.empty and not work.empty:
+        source = pd.Series([""] * len(work), index=work.index, dtype="string")
+    work["nlp_concepto_crudo"] = source.reindex(work.index, fill_value="").map(clean_raw_concept)
+    return work
+
+
 def _coalesce_text_column(df: pd.DataFrame, column: str) -> pd.Series:
     if column in df:
         return df[column].fillna("").astype(str)
@@ -213,6 +292,8 @@ def _manager_nlp_hits(
     work = _filter_manager_subordinate(tx)
     if work.empty:
         return work.iloc[0:0].copy()
+
+    work = _ensure_raw_concept_column(work)
 
     combined_text = (
         _coalesce_text_column(work, "nlp_concepto_sospechoso")
@@ -244,6 +325,7 @@ def _manager_nlp_hits(
             fallback["matched_category"] = fallback["nlp_concepto_sospechoso"].apply(
                 lambda value: next(iter(_tokenize_concepts(value)), "SOSPECHOSO")
             )
+            fallback = _ensure_raw_concept_column(fallback)
             return fallback
 
     return work.iloc[0:0].copy()
@@ -293,6 +375,7 @@ def question1_manager_nlp(
                 "manager_user_id",
                 "subordinado_user_id",
                 "nlp_concepto_sospechoso",
+                "nlp_concepto_crudo",
                 "tx_count",
                 "monto_total",
                 "interpretabilidad",
@@ -308,6 +391,7 @@ def question1_manager_nlp(
                 "manager_user_id",
                 "subordinado_user_id",
                 "nlp_concepto_sospechoso",
+                "nlp_concepto_crudo",
                 "tx_count",
                 "monto_total",
                 "interpretabilidad",
@@ -348,12 +432,14 @@ def question1_manager_nlp(
         .agg(
             tx_count=(COL_AMOUNT, "count"),
             monto_total=(COL_AMOUNT, "sum"),
+            nlp_concepto_crudo=("nlp_concepto_crudo", _combine_unique_texts),
         )
         .reset_index()
     )
     agg = agg.sort_values(["tx_count", "monto_total"], ascending=[False, False])
     agg["timeframe"] = timeframe
     agg = agg.rename(columns={"matched_category": "nlp_concepto_sospechoso"})
+    agg["nlp_concepto_crudo"] = agg["nlp_concepto_crudo"].fillna("")
     agg["interpretabilidad"] = agg.apply(
         lambda row: (
             f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
@@ -362,6 +448,11 @@ def question1_manager_nlp(
             f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
             f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
             f"{_format_float(row.get('monto_total', 0))} en monto total."
+            + (
+                f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
+                if str(row.get("nlp_concepto_crudo", "")).strip()
+                else ""
+            )
         ),
         axis=1,
     )
@@ -371,6 +462,7 @@ def question1_manager_nlp(
         "manager_user_id",
         "subordinado_user_id",
         "nlp_concepto_sospechoso",
+        "nlp_concepto_crudo",
         "tx_count",
         "monto_total",
         "interpretabilidad",
@@ -819,7 +911,7 @@ def question4_quid_negative_value_vs_load(
 
 
 def question5_reference_reuse(
-    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, include_raw_concept: bool = False
 ) -> pd.DataFrame:
     """Detecta reutilización sospechosa de referencias de pago en corto plazo.
 
@@ -830,6 +922,9 @@ def question5_reference_reuse(
         transacciones base.
     timeframe
         Ventana temporal seleccionada (``"todo_el_tiempo"`` por defecto).
+    include_raw_concept
+        Cuando es ``True`` agrega un análisis análogo de reutilización
+        usando conceptos crudos normalizados.
 
     Metodología
     -----------
@@ -843,6 +938,8 @@ def question5_reference_reuse(
        las referencias más frecuentes.
     5. Redacta interpretabilidad con detalles de pares y transacciones
        involucrados.
+    6. Si ``include_raw_concept`` es ``True``, replica el análisis para los
+       conceptos crudos limpiados de ruido textual.
 
     Returns
     -------
@@ -865,7 +962,21 @@ def question5_reference_reuse(
         "tx_count",
     ]
 
+    concept_summary_columns = [
+        "concepto_norm",
+        "concepto_crudo",
+        "concepto_len",
+        "first_ts",
+        "last_ts",
+        "days_range",
+        "n_pairs",
+        "pairs",
+        "tx_count",
+    ]
+
     summary_relajado = False
+    concept_summary_relajado = False
+    concept_summary_df = pd.DataFrame(columns=concept_summary_columns)
     if not summary.empty:
         filtered = summary.loc[summary.get("n_pairs", 0) > 1].copy()
         filtered = filtered.sort_values(
@@ -981,6 +1092,9 @@ def question5_reference_reuse(
         "risk_score",
     ]
 
+    concept_tx_columns = tx_columns + ["nlp_concepto_crudo", "concepto_norm"]
+    concept_tx_df = pd.DataFrame(columns=concept_tx_columns)
+
     if not tx.empty:
         involved_refs = summary_df["reference_norm"].dropna().unique().tolist()
         filtered_tx = tx.loc[tx.get("feat_reference_norm", "").isin(involved_refs)].copy()
@@ -1014,11 +1128,122 @@ def question5_reference_reuse(
     else:
         tx_df["interpretabilidad"] = pd.Series(dtype="object")
 
-    combined = pd.concat([summary_df, tx_df], ignore_index=True, sort=False)
+    if include_raw_concept and not base_tx.empty:
+        concept_source = _ensure_raw_concept_column(base_tx)
+        concept_source["nlp_concepto_crudo"] = concept_source["nlp_concepto_crudo"].fillna("").astype(str)
+        concept_source["concepto_norm"] = concept_source["nlp_concepto_crudo"].map(normalize_clean_concept)
+        concept_source = concept_source.loc[concept_source["concepto_norm"].str.len() > 0].copy()
+        if not concept_source.empty:
+            concept_source["pair_id"] = (
+                concept_source.get(COL_SENDER_ID, "").astype(str)
+                + "->"
+                + concept_source.get(COL_RECEIVER_ID, "").astype(str)
+            )
+            concept_source["fecha_hora_ts"] = pd.to_datetime(
+                concept_source.get("fecha_hora_ts"), errors="coerce"
+            )
+            concept_summary = (
+                concept_source.groupby("concepto_norm", observed=True)
+                .agg(
+                    concepto_crudo=("nlp_concepto_crudo", _most_common_text),
+                    concepto_len=("nlp_concepto_crudo", _max_text_length),
+                    first_ts=("fecha_hora_ts", "min"),
+                    last_ts=("fecha_hora_ts", "max"),
+                    n_pairs=("pair_id", "nunique"),
+                    pairs=("pair_id", lambda s: "; ".join(sorted(set(map(str, s))))),
+                    tx_count=(COL_AMOUNT, "count"),
+                )
+                .reset_index()
+            )
+            if not concept_summary.empty:
+                concept_summary["days_range"] = (
+                    concept_summary["last_ts"] - concept_summary["first_ts"]
+                ).dt.days.fillna(0)
+                strict_summary = concept_summary.loc[
+                    (concept_summary["n_pairs"] > 1)
+                    & (concept_summary["days_range"].fillna(0) <= 30)
+                ].copy()
+                if not strict_summary.empty:
+                    concept_summary_df = strict_summary
+                else:
+                    concept_summary_relajado = True
+                    concept_summary_df = concept_summary.sort_values(
+                        ["tx_count", "days_range"], ascending=[False, True]
+                    ).head(10)
+                if not concept_summary_df.empty:
+                    concept_summary_df["concepto_len"] = (
+                        concept_summary_df.get("concepto_len", 0).fillna(0).astype(int)
+                    )
+                    concept_summary_df["days_range"] = (
+                        concept_summary_df.get("days_range", 0).fillna(0).astype(int)
+                    )
+                    concept_summary_df["first_ts"] = concept_summary_df["first_ts"].dt.strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    concept_summary_df["last_ts"] = concept_summary_df["last_ts"].dt.strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    concept_summary_df = concept_summary_df.reindex(columns=concept_summary_columns)
+                    involved_norms = concept_summary_df["concepto_norm"].dropna().unique().tolist()
+                    concept_filtered = concept_source.loc[
+                        concept_source["concepto_norm"].isin(involved_norms)
+                    ].copy()
+                    if not concept_filtered.empty:
+                        concept_filtered = concept_filtered.sort_values(
+                            ["concepto_norm", "fecha_hora_ts"], ascending=[True, True]
+                        )
+                        concept_tx_df = concept_filtered.reindex(columns=concept_tx_columns)
+
+    concept_summary_df["nivel_respuesta"] = "concepto"
+    concept_summary_df["timeframe"] = timeframe
+    if not concept_summary_df.empty:
+        concept_summary_df["interpretabilidad"] = concept_summary_df.apply(
+            lambda row: (
+                f"El concepto crudo '{_coalesce_str(row.get('concepto_crudo'), default='sin_concepto')}' se reutilizó "
+                f"en {int(row.get('n_pairs', 0))} pares dentro de {row.get('days_range', 0)} días, "
+                f"acumulando {int(row.get('tx_count', 0))} transacciones entre {row.get('first_ts', 'sin_fecha')} "
+                f"y {row.get('last_ts', 'sin_fecha')}."
+                + (
+                    " Se listan conceptos crudos frecuentes sin cumplir aún el criterio multi-par (modo relajado)."
+                    if concept_summary_relajado
+                    else ""
+                )
+            ),
+            axis=1,
+        )
+    else:
+        concept_summary_df["interpretabilidad"] = pd.Series(dtype="object")
+
+    concept_tx_df["nivel_respuesta"] = "transaccion_concepto"
+    concept_tx_df["timeframe"] = timeframe
+    if not concept_tx_df.empty:
+        concept_tx_df["interpretabilidad"] = concept_tx_df.apply(
+            lambda row: (
+                f"La transacción del {row.get('fecha_hora_ts', 'sin_fecha')} repitió el concepto crudo "
+                f"'{_coalesce_str(row.get('nlp_concepto_crudo'), default='sin_concepto')}' entre "
+                f"{_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
+                f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')}, "
+                f"reforzando un posible patrón coordinado en '{timeframe}'."
+            ),
+            axis=1,
+        )
+    else:
+        concept_tx_df["interpretabilidad"] = pd.Series(dtype="object")
+
+    frames = [summary_df, tx_df]
+    if include_raw_concept:
+        frames.extend([concept_summary_df, concept_tx_df])
+    combined = pd.concat(frames, ignore_index=True, sort=False)
     ordered_cols = [
         "timeframe",
         "nivel_respuesta",
-    ] + [c for c in summary_columns + tx_columns if c in combined.columns]
+    ] + [
+        c
+        for c in summary_columns
+        + tx_columns
+        + (concept_summary_columns + ["concepto_norm", "nlp_concepto_crudo"] if include_raw_concept else [])
+        if c in combined.columns
+    ]
     ordered_cols = list(dict.fromkeys(ordered_cols)) + ["interpretabilidad"]
     return combined.reindex(columns=ordered_cols)
 
