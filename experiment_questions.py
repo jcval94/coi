@@ -28,13 +28,41 @@ from coi_fraud.schemas import (
 
 DEFAULT_TIMEFRAME = "todo_el_tiempo"
 DEFAULT_OUTPUT_DIR = Path("answers")
-NLP_CATEGORIES = ("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")
+NLP_CATEGORIES = (
+    "SOBORNO",
+    "FACILITACIÓN",
+    "OFUSCACIÓN",
+    "EXTORSIÓN",
+    "FAVORES SEXUALES",
+    "REGALOS_LUJO",
+    "CONFLICTO_INTERES_FAMILIAR",
+    "VIATICOS_LUJOSOS",
+    "FACTURACION_SIMULADA",
+    "CONSULTORIA_FANTASMA",
+    "DONATIVO_CRUZADO",
+    "PRESION_POLITICA",
+    "NOMINA_PARALELA",
+    "REEMBOLSO_DUDOSO",
+    "PRESTAMO",
+    "COI_RELACIONAL",
+)
 NLP_CATEGORY_SYNONYMS = {
-    "SOBORNO": ("SOBOR", "COIMA", "BRIBE", "COHECHO"),
-    "FACILITACIÓN": ("FACILIT", "FACILITATION", "GRATIFICACIÓN"),
-    "OFUSCACIÓN": ("OFUSC", "OBFUS", "OCULT", "ENCUBR"),
-    "EXTORSIÓN": ("EXTORS", "EXTORT", "AMENAZ"),
-    "FAVORES SEXUALES": ("SEXUAL", "SEX", "ACOSO"),
+    "SOBORNO": ("SOBOR", "COIMA", "BRIBE", "COHECHO", "SWEETENER"),
+    "FACILITACIÓN": ("FACILIT", "FACILITATION", "GRATIFICACIÓN", "FAST TRACK", "PRIORIDAD"),
+    "OFUSCACIÓN": ("OFUSC", "OBFUS", "OCULT", "ENCUBR", "SIN FACTURA"),
+    "EXTORSIÓN": ("EXTORS", "EXTORT", "AMENAZ", "DERECHO DE PISO"),
+    "FAVORES SEXUALES": ("SEXUAL", "SEX", "ACOSO", "PRIVADO", "INTIMO"),
+    "REGALOS_LUJO": ("REGALO", "LUJO", "VIP", "PREMIUM", "SUITE"),
+    "CONFLICTO_INTERES_FAMILIAR": ("FAMILIA", "PARENTE", "PAREJA", "ESPOS", "HIJO"),
+    "VIATICOS_LUJOSOS": ("VIATIC", "HOTEL", "BUSINESS", "PRIMERA", "CINCO ESTRELLAS"),
+    "FACTURACION_SIMULADA": ("FACTURA", "FANTASMA", "SIMULAD", "FACHADA"),
+    "CONSULTORIA_FANTASMA": ("CONSULT", "ASESORIA", "FANTAS", "DUMMY"),
+    "DONATIVO_CRUZADO": ("DONATIVO", "DONACIÓN", "PATROCINIO", "CAMPAÑA"),
+    "PRESION_POLITICA": ("POLIT", "PARTIDO", "CANDID", "DIPUTADO"),
+    "NOMINA_PARALELA": ("NÓMINA", "BONO", "COMPENS", "EXTRA"),
+    "REEMBOLSO_DUDOSO": ("REEMBOLSO", "VIÁTICO", "GASTO", "VARIOS"),
+    "PRESTAMO": ("PRÉSTAM", "ADELAN", "ABONO", "ANTICIPO"),
+    "COI_RELACIONAL": ("COMPADRE", "PRIMO", "FAMIL", "AMIGO"),
 }
 CONCEPT_SPLIT_PATTERN = re.compile(r"[\s,;|/]+")
 
@@ -3017,6 +3045,10 @@ def question17_nlp_person_profiles(
         "risk_avg_person",
         "sum_emit",
         "sum_recv",
+        "nlp_persona_score_prob_coi",
+        "nlp_persona_sentimiento_promedio",
+        "nlp_persona_score_emit_promedio",
+        "nlp_persona_score_recv_promedio",
     ]
 
     columns = [
@@ -3027,6 +3059,11 @@ def question17_nlp_person_profiles(
         "conceptos_unicos",
         "conceptos_unicos_por_tx",
         "proporcion_sospechosa",
+        "score_probable_coi",
+        "nlp_score_emit_promedio",
+        "nlp_score_recv_promedio",
+        "sentimiento_promedio",
+        "sentimiento_etiqueta",
         "risk_avg_person",
         "sum_emit",
         "sum_recv",
@@ -3046,6 +3083,11 @@ def question17_nlp_person_profiles(
             "conceptos_unicos": 0,
             "conceptos_unicos_por_tx": 0.0,
             "proporcion_sospechosa": 0.0,
+            "score_probable_coi": 0.0,
+            "nlp_score_emit_promedio": 0.0,
+            "nlp_score_recv_promedio": 0.0,
+            "sentimiento_promedio": 0.0,
+            "sentimiento_etiqueta": "neutral",
             "risk_avg_person": 0.0,
             "sum_emit": 0.0,
             "sum_recv": 0.0,
@@ -3086,6 +3128,21 @@ def question17_nlp_person_profiles(
     personas["risk_avg_person"] = personas.get("risk_avg_person", 0.0).fillna(0.0).astype(float)
     personas["sum_emit"] = personas.get("sum_emit", 0.0).fillna(0.0).astype(float)
     personas["sum_recv"] = personas.get("sum_recv", 0.0).fillna(0.0).astype(float)
+    personas["score_probable_coi"] = (
+        personas.get("nlp_persona_score_prob_coi", 0.0).fillna(0.0).astype(float)
+    )
+    personas["nlp_score_emit_promedio"] = (
+        personas.get("nlp_persona_score_emit_promedio", 0.0).fillna(0.0).astype(float)
+    )
+    personas["nlp_score_recv_promedio"] = (
+        personas.get("nlp_persona_score_recv_promedio", 0.0).fillna(0.0).astype(float)
+    )
+    personas["sentimiento_promedio"] = (
+        personas.get("nlp_persona_sentimiento_promedio", 0.0).fillna(0.0).astype(float)
+    )
+    personas["sentimiento_etiqueta"] = personas["sentimiento_promedio"].apply(
+        lambda v: "positivo" if v > 0.2 else ("negativo" if v < -0.2 else "neutral")
+    )
 
     personas["tx_sospechosas_nlp"] = personas["nlp_persona_total_transacciones_sospechosas"]
     personas["conceptos_unicos"] = personas["nlp_persona_conceptos_sospechosos_unicos"]
@@ -3152,8 +3209,8 @@ def question17_nlp_person_profiles(
     )
 
     personas = personas.sort_values(
-        ["tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
-        ascending=[False, False, False],
+        ["score_probable_coi", "tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
+        ascending=[False, False, False, False],
     ).head(max(1, int(top_n)))
 
     personas["interpretabilidad"] = personas.apply(
@@ -3166,7 +3223,10 @@ def question17_nlp_person_profiles(
             f"Cada concepto cubre en promedio {row.get('conceptos_unicos_por_tx', 0):.2f} "
             f"conceptos únicos por transacción sospechosa, con foco en "
             f"{row.get('concepto_predominante', 'sin_concepto')}. Riesgo promedio "
-            f"{row.get('risk_avg_person', 0):.2f}. Flujo neto {_format_float(row.get('net_flow', 0))} "
+            f"{row.get('risk_avg_person', 0):.2f}. Score COI {row.get('score_probable_coi', 0):.2f} "
+            f"(emisor {row.get('nlp_score_emit_promedio', 0):.2f} / receptor {row.get('nlp_score_recv_promedio', 0):.2f}) "
+            f"y sentimiento {row.get('sentimiento_etiqueta', 'neutral')} "
+            f"({row.get('sentimiento_promedio', 0):.2f}). Flujo neto {_format_float(row.get('net_flow', 0))} "
             f"(emitidos {_format_float(row.get('sum_emit', 0))} vs recibidos "
             f"{_format_float(row.get('sum_recv', 0))})."
         ),

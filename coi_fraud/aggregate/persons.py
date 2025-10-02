@@ -186,6 +186,12 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "nlp_persona_total_transacciones_sospechosas",
                 "nlp_persona_conceptos_sospechosos_unicos",
                 "nlp_persona_top_conceptos",
+                "nlp_persona_score_emit_promedio",
+                "nlp_persona_sentimiento_emit_promedio",
+                "nlp_persona_score_recv_promedio",
+                "nlp_persona_sentimiento_recv_promedio",
+                "nlp_persona_score_prob_coi",
+                "nlp_persona_sentimiento_promedio",
                 "desbalance_persona_monto_neto",
                 "desbalance_persona_ratio_emision_vs_recepcion",
                 "desbalance_persona_zscore_emision_total",
@@ -327,6 +333,117 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
         people["nlp_persona_top_conceptos"] = people["nlp_persona_top_conceptos"].apply(
             lambda x: x if isinstance(x, list) else ([] if pd.isna(x) else [x])
         )
+
+    score_series = df.get("feat_nlp_coi_score")
+    if score_series is None:
+        score_series = pd.Series(0.0, index=df.index, dtype="float64")
+    else:
+        score_series = pd.to_numeric(score_series, errors="coerce").fillna(0.0).astype(float)
+    senti_series = df.get("feat_nlp_sentimiento")
+    if senti_series is None:
+        senti_series = pd.Series(0.0, index=df.index, dtype="float64")
+    else:
+        senti_series = pd.to_numeric(senti_series, errors="coerce").fillna(0.0).astype(float)
+
+    if COL_SENDER_ID in df.columns:
+        emit_payload = pd.DataFrame(
+            {
+                "persona": df[COL_SENDER_ID].astype("string"),
+                "_score": score_series.values,
+                "_sent": senti_series.values,
+            }
+        )
+        emit_stats = (
+            emit_payload.groupby("persona", observed=True)
+            .agg(
+                nlp_persona_score_emit_promedio=("_score", "mean"),
+                nlp_persona_score_emit_max=("_score", "max"),
+                nlp_persona_sentimiento_emit_promedio=("_sent", "mean"),
+            )
+            .reset_index()
+        )
+    else:
+        emit_stats = pd.DataFrame(
+            columns=[
+                "persona",
+                "nlp_persona_score_emit_promedio",
+                "nlp_persona_score_emit_max",
+                "nlp_persona_sentimiento_emit_promedio",
+            ]
+        )
+
+    if COL_RECEIVER_ID in df.columns:
+        recv_payload = pd.DataFrame(
+            {
+                "persona": df[COL_RECEIVER_ID].astype("string"),
+                "_score": score_series.values,
+                "_sent": senti_series.values,
+            }
+        )
+        recv_stats = (
+            recv_payload.groupby("persona", observed=True)
+            .agg(
+                nlp_persona_score_recv_promedio=("_score", "mean"),
+                nlp_persona_score_recv_max=("_score", "max"),
+                nlp_persona_sentimiento_recv_promedio=("_sent", "mean"),
+            )
+            .reset_index()
+        )
+    else:
+        recv_stats = pd.DataFrame(
+            columns=[
+                "persona",
+                "nlp_persona_score_recv_promedio",
+                "nlp_persona_score_recv_max",
+                "nlp_persona_sentimiento_recv_promedio",
+            ]
+        )
+
+    people = people.merge(emit_stats, on="persona", how="left")
+    people = people.merge(recv_stats, on="persona", how="left")
+
+    for col in [
+        "nlp_persona_score_emit_promedio",
+        "nlp_persona_score_emit_max",
+        "nlp_persona_sentimiento_emit_promedio",
+        "nlp_persona_score_recv_promedio",
+        "nlp_persona_score_recv_max",
+        "nlp_persona_sentimiento_recv_promedio",
+    ]:
+        if col not in people:
+            people[col] = 0.0
+        else:
+            people[col] = people[col].fillna(0.0).astype(float)
+
+    max_cols = [
+        col
+        for col in [
+            "nlp_persona_score_emit_promedio",
+            "nlp_persona_score_recv_promedio",
+            "nlp_persona_score_emit_max",
+            "nlp_persona_score_recv_max",
+        ]
+        if col in people
+    ]
+    if max_cols:
+        people["nlp_persona_score_prob_coi"] = people[max_cols].max(axis=1)
+    else:
+        people["nlp_persona_score_prob_coi"] = 0.0
+
+    emit_sent = people.get("nlp_persona_sentimiento_emit_promedio", pd.Series(0.0, index=people.index))
+    recv_sent = people.get("nlp_persona_sentimiento_recv_promedio", pd.Series(0.0, index=people.index))
+    emit_mask = (emit_sent.notna()).astype(int)
+    recv_mask = (recv_sent.notna()).astype(int)
+    emit_sent = emit_sent.fillna(0.0)
+    recv_sent = recv_sent.fillna(0.0)
+    denom = (emit_mask + recv_mask).replace(0, 1)
+    people["nlp_persona_sentimiento_promedio"] = (emit_sent + recv_sent) / denom
+
+    drop_cols = ["nlp_persona_score_emit_max", "nlp_persona_score_recv_max"]
+    existing_drop = [c for c in drop_cols if c in people]
+    if existing_drop:
+        people = people.drop(columns=existing_drop)
+
 
     flag_stats = (
         df.groupby(COL_SENDER_ID, observed=True)

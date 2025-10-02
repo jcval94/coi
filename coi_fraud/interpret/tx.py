@@ -83,7 +83,10 @@ def tx_interpretation(r):
 
     vaguedad = float(r.get("feat_nlp_vaguedad", 0) or 0)
     emocion = float(r.get("feat_nlp_emocion", 0) or 0)
+    sentimiento = float(r.get("feat_nlp_sentimiento", 0) or 0)
+    coi_score = float(r.get("feat_nlp_coi_score", 0) or 0)
     risk_points = float(r.get("feat_nlp_risk_points", 0) or 0)
+    evento_corp = bool(r.get("nlp_evento_corporativo", False))
     nlp_detail_added = False
     if r.get("nlp_concepto_sospechoso"):
         msgs.append(f"NLP: {r['nlp_concepto_sospechoso']}.")
@@ -91,8 +94,22 @@ def tx_interpretation(r):
     if vaguedad > 0.7 or emocion > 0:
         msgs.append("Descripción vaga/emocional.")
         nlp_detail_added = True
-    nlp_part = ((vaguedad + (0.5 if emocion > 0 else 0.0)) * 0.5 * weights.get("nlp", 0.0)) + (
-        risk_points * 0.15
+    if abs(sentimiento) >= 0.3:
+        tono = "positivo" if sentimiento > 0 else "negativo"
+        msgs.append(f"Sentimiento {tono} inusual (score={sentimiento:.2f}).")
+        nlp_detail_added = True
+    if evento_corp:
+        msgs.append("Menciona evento corporativo sensible.")
+        nlp_detail_added = True
+    if coi_score >= 2.0:
+        msgs.append(f"Score COI elevado ({coi_score:.2f}).")
+        nlp_detail_added = True
+    nlp_part = (
+        (vaguedad + (0.5 if emocion > 0 else 0.0)) * 0.45 * weights.get("nlp", 0.0)
+        + (risk_points * 0.12)
+        + (abs(sentimiento) * 0.25)
+        + (coi_score * 0.18)
+        + (0.2 if evento_corp else 0.0)
     )
     if nlp_part > 0:
         _add_part("nlp", nlp_part)
