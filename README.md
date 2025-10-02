@@ -172,7 +172,7 @@ interpretabilidad[["question_id", "filas", "interpretabilidad_ejemplos"]].head()
 ```python
 from coi_fraud import generate_diverse_dataset
 
-dataset = generate_diverse_dataset()  # 10 000 filas por defecto
+dataset = generate_diverse_dataset()  # 6 000 filas por defecto
 ```
 
 ## Preguntas de experimentación (Q1–Q7)

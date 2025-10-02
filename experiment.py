@@ -28,8 +28,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--rows",
         type=int,
-        default=5_000,
-        help="Número de transacciones a generar (por defecto: 5000).",
+        default=6_000,
+        help="Número de transacciones a generar (por defecto: 6000).",
     )
     parser.add_argument(
         "--seed",
