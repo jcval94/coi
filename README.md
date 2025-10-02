@@ -220,6 +220,153 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 
+- **Q8 – Receptores nuevos con montos altos** (`question8_case13_new_employees`):
+  - **Metodología:** utiliza `reports["persona"][timeframe]` para filtrar a receptores con bandera `caso13_persona_flag_nuevo_receptor_altos_montos`. Prioriza a quienes recibieron montos altos (percentil 90) dentro de sus primeras interacciones (≤6 meses) y calcula totales, emisores únicos y promedios.
+  - **Parámetros clave:** `timeframe`.
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question8_case13_new_employees
+
+    q8 = question8_case13_new_employees(reports, timeframe="todo_el_tiempo")
+    print(q8.head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q8_case13_new_employees
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plot_q8_case13_new_employees(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q9 – Veteranos que reciben de emisores nuevos** (`question9_case14_veterans_from_newcomers`):
+  - **Metodología:** revisa `reports["persona"][timeframe]` buscando la bandera `caso14_persona_flag_antiguo_recibe_de_nuevos` o, en su defecto, reconstruye las métricas desde transacciones y heurísticas de antigüedad. Agrega transacciones y montos recibidos de emisores recientes resaltando emisores únicos y promedios.
+  - **Parámetros clave:** `timeframe`.
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question9_case14_veterans_from_newcomers
+
+    q9 = question9_case14_veterans_from_newcomers(reports, timeframe="todo_el_tiempo")
+    print(q9.head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q9_case14_veterans_from_newcomers
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q9_case14_veterans_from_newcomers(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q10 – Rachas Yo-Yo prolongadas** (`question10_yoyo_streaks`):
+  - **Metodología:** analiza `reports["transaccion"][timeframe]` con la bandera `sig_yoyo` para encontrar pares bidireccionales con rachas consecutivas de ida y vuelta. Si faltan banderas, aplica heurísticas de ventanas horarias. Cruza con el resumen `par_personas` para incorporar riesgo y filtra por rachas mínimas y riesgo máximo.
+  - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos consecutivos, por defecto `2`); `risk_threshold` (riesgo mínimo del par, por defecto `1.8`).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question10_yoyo_streaks
+
+    q10 = question10_yoyo_streaks(reports, timeframe="ultimos_3_meses", min_consecutive=3)
+    print(q10[["par_bidir", "racha_max_yo_yo", "riesgo_max_par"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q10_yoyo_streaks
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plot_q10_yoyo_streaks(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q11 – Montos pegados a umbrales regulatorios** (`question11_near_threshold_structuring`):
+  - **Metodología:** procesa `reports["transaccion"][timeframe]` para identificar pares con bandera `sig_near_thr` y deltas pequeños (`feat_delta_near_thr`) respecto a umbrales comunes. Si falta la métrica, estima la distancia a umbrales típicos y aplica heurísticas flexibles para garantizar cobertura. Resume meses con recurrencia, monto total y riesgo.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con recurrencia, por defecto `3`); `delta_limit` (diferencia máxima al umbral, por defecto `10.0`).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question11_near_threshold_structuring
+
+    q11 = question11_near_threshold_structuring(reports, timeframe="todo_el_tiempo", min_months=2)
+    print(q11[["pair", "meses_con_near", "monto_total_near"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q11_near_threshold_structuring
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q11_near_threshold_structuring(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q12 – Smurfing crónico** (`question12_smurfing_chronic`):
+  - **Metodología:** parte de `reports["transaccion"][timeframe]` y la bandera `sig_smurf` para localizar pares con depósitos fragmentados pequeños a lo largo de varios meses. Si no hay banderas, usa cuantiles por par para etiquetar montos reducidos y estima tendencias de riesgo promedio y máximo por mes.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con smurfing, por defecto `3`).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question12_smurfing_chronic
+
+    q12 = question12_smurfing_chronic(reports, timeframe="todo_el_tiempo", min_months=4)
+    print(q12[["pair", "meses_con_smurf", "monto_smurf_total"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q12_smurfing_chronic
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q12_smurfing_chronic(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q13 – Préstamos incumplidos con ráfagas de frecuencia** (`question13_bad_loans_with_frequency`):
+  - **Metodología:** inspecciona banderas `sig_loan_bad_repay` y `sig_freq` dentro de `reports["transaccion"][timeframe]`. Calcula coincidencias mensuales de préstamos con repago ≤50% y eventos de alta frecuencia; cuando faltan banderas, emplea heurísticas bidireccionales para estimar préstamos, reembolsos y umbrales de frecuencia. Agrega meses coincidentes, montos y riesgos.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos de coincidencia, por defecto `3`).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question13_bad_loans_with_frequency
+
+    q13 = question13_bad_loans_with_frequency(reports, timeframe="todo_el_tiempo")
+    print(q13[["pair", "meses_con_coincidencia", "monto_prestamos_incumplidos"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q13_bad_loans_with_frequency
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q13_bad_loans_with_frequency(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q14 – Pagos recurrentes tipo nómina** (`question14_recurrent_payroll`):
+  - **Metodología:** utiliza `reports["transaccion"][timeframe]` y la bandera `sig_recurrent` para agrupar pagos emitidos cerca de un mismo día de corte. Identifica meses consecutivos con comportamiento recurrente y calcula totales, promedios y número de pagos, relajando banderas cuando es necesario para mantener cobertura.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses consecutivos mínimos, por defecto `3`).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question14_recurrent_payroll
+
+    q14 = question14_recurrent_payroll(reports, timeframe="todo_el_tiempo", min_months=4)
+    print(q14[["emisor", "receptor", "meses_recurrentes", "monto_total"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q14_recurrent_payroll
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q14_recurrent_payroll(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
 ## CLI
 ```bash
 python -m coi_fraud --csv ./mis_transacciones.csv --out ./forensic_outputs
