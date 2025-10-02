@@ -22,7 +22,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Genera un dataset sintético, ejecuta la canalización de riesgo "
-            "y evalúa cada escenario/pregunta Q1–Q17 midiendo tiempos y filas."
+            "y evalúa cada escenario/pregunta Q1–Q18 midiendo tiempos y filas."
         )
     )
     parser.add_argument(

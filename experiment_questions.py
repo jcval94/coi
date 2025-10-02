@@ -85,6 +85,7 @@ QUESTION_TITLES: Dict[str, str] = {
     "q15_coordinated_cluster_signals": "Q15 – Clusters con señales coordinadas",
     "q16_multisignal_transactions": "Q16 – Transacciones con múltiples señales simultáneas",
     "q17_nlp_person_profiles": "Q17 – Perfiles NLP sospechosos por persona",
+    "q18_user_risk_scores": "Q18 – Personas con riesgo agregado y banderas",
 }
 
 
@@ -3236,6 +3237,209 @@ def question17_nlp_person_profiles(
     return personas.reindex(columns=columns)
 
 
+def question18_user_risk_scores(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 25
+) -> pd.DataFrame:
+    """Prioriza personas por riesgo promedio, desbalance y señales activas."""
+
+    personas = _get_section(reports, "persona", timeframe)
+
+    columns = [
+        "timeframe",
+        "ranking_prioridad",
+        "persona",
+        "risk_avg_person",
+        "risk_tier",
+        "movements",
+        "n_tx_emit",
+        "sum_emit",
+        "n_tx_recv",
+        "sum_recv",
+        "net_flow",
+        "desbalance_persona_monto_neto",
+        "desbalance_persona_meses_totales",
+        "desbalance_persona_tasa_meses_envia_extremo",
+        "desbalance_persona_tasa_meses_recibe_extremo",
+        "flags_activas",
+        "flag_rate_max",
+        "banderas_destacadas",
+        "interpretabilidad",
+    ]
+
+    if personas.empty or "persona" not in personas.columns:
+        return pd.DataFrame(
+            [
+                {
+                    "timeframe": timeframe,
+                    "ranking_prioridad": 0,
+                    "persona": "sin_persona",
+                    "risk_avg_person": 0.0,
+                    "risk_tier": "SIN_RIESGO",
+                    "movements": 0,
+                    "n_tx_emit": 0,
+                    "sum_emit": 0.0,
+                    "n_tx_recv": 0,
+                    "sum_recv": 0.0,
+                    "net_flow": 0.0,
+                    "desbalance_persona_monto_neto": 0.0,
+                    "desbalance_persona_meses_totales": 0,
+                    "desbalance_persona_tasa_meses_envia_extremo": 0.0,
+                    "desbalance_persona_tasa_meses_recibe_extremo": 0.0,
+                    "flags_activas": 0,
+                    "flag_rate_max": 0.0,
+                    "banderas_destacadas": "sin_banderas_destacadas",
+                    "interpretabilidad": (
+                        "No se identificaron personas prioritarias por riesgo en la ventana "
+                        f"'{timeframe}'."
+                    ),
+                }
+            ]
+        ).reindex(columns=columns)
+
+    work = personas.copy()
+    work["timeframe"] = timeframe
+
+    for col in ["n_tx_emit", "n_tx_recv"]:
+        if col in work.columns:
+            work[col] = (
+                pd.to_numeric(work[col], errors="coerce").fillna(0).astype(int)
+            )
+        else:
+            work[col] = 0
+    for col in ["sum_emit", "sum_recv", "risk_avg_person"]:
+        if col in work.columns:
+            work[col] = (
+                pd.to_numeric(work[col], errors="coerce").fillna(0.0).astype(float)
+            )
+        else:
+            work[col] = 0.0
+
+    if "movements" in work.columns:
+        work["movements"] = (
+            pd.to_numeric(work["movements"], errors="coerce").fillna(0).astype(int)
+        )
+    else:
+        work["movements"] = work["n_tx_emit"] + work["n_tx_recv"]
+
+    work["net_flow"] = work["sum_emit"] - work["sum_recv"]
+    if "desbalance_persona_monto_neto" in work.columns:
+        work["desbalance_persona_monto_neto"] = (
+            pd.to_numeric(work["desbalance_persona_monto_neto"], errors="coerce")
+            .fillna(work["net_flow"])
+            .astype(float)
+        )
+    else:
+        work["desbalance_persona_monto_neto"] = work["net_flow"]
+    if "desbalance_persona_meses_totales" in work.columns:
+        work["desbalance_persona_meses_totales"] = (
+            pd.to_numeric(work["desbalance_persona_meses_totales"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+    else:
+        work["desbalance_persona_meses_totales"] = 0
+    for col in [
+        "desbalance_persona_tasa_meses_envia_extremo",
+        "desbalance_persona_tasa_meses_recibe_extremo",
+    ]:
+        if col in work.columns:
+            work[col] = (
+                pd.to_numeric(work[col], errors="coerce").fillna(0.0).astype(float)
+            )
+        else:
+            work[col] = 0.0
+
+    flag_rate_cols = {
+        "yo_yo_persona_tasa_flag_emisor": "yo-yo",
+        "smurf_persona_tasa_flag_emisor": "smurf",
+        "frecuencia_persona_tasa_flag_emisor": "frecuencia inusual",
+        "recurrente_persona_tasa_flag_emisor": "recurrente",
+        "prestamo_persona_tasa_repay_insuficiente": "préstamo impago",
+        "monto_persona_tasa_flag_redondo": "montos redondos",
+        "umbral_persona_tasa_flag_cercania": "cercano a umbral",
+        "red_persona_tasa_en_ciclos": "ciclos en red",
+        "red_persona_tasa_en_triangulos": "triángulos en red",
+        "quid_pro_quo_persona_tasa_flag": "quid pro quo",
+        "referencia_persona_tasa_reutilizada": "referencia reutilizada",
+        "cambio_brusco_persona_tasa_flag": "cambio brusco",
+        "nuevo_enlace_persona_tasa_flag": "nuevo enlace",
+    }
+    for col in flag_rate_cols:
+        if col in work.columns:
+            work[col] = (
+                pd.to_numeric(work[col], errors="coerce").fillna(0.0).astype(float)
+            )
+        else:
+            work[col] = 0.0
+
+    def _risk_tier(value: float) -> str:
+        if value >= 4.7:
+            return "CRITICO"
+        if value >= 3.2:
+            return "ALTO"
+        if value >= 1.8:
+            return "MEDIO"
+        return "BAJO"
+
+    work["risk_tier"] = work["risk_avg_person"].apply(_risk_tier)
+
+    if flag_rate_cols:
+        flag_cols = list(flag_rate_cols.keys())
+        work["flags_activas"] = work[flag_cols].gt(0).sum(axis=1).astype(int)
+        work["flag_rate_max"] = work[flag_cols].max(axis=1)
+    else:
+        work["flags_activas"] = 0
+        work["flag_rate_max"] = 0.0
+
+    def _format_flags(row: pd.Series) -> str:
+        pairs = [
+            (flag_rate_cols[col], float(row.get(col, 0.0)))
+            for col in flag_rate_cols
+            if float(row.get(col, 0.0)) > 0
+        ]
+        pairs.sort(key=lambda item: item[1], reverse=True)
+        top_items = pairs[:3]
+        return (
+            ", ".join(f"{name} ({rate:.0%})" for name, rate in top_items)
+            if top_items
+            else "sin_banderas_destacadas"
+        )
+
+    work["banderas_destacadas"] = work.apply(_format_flags, axis=1)
+
+    work["abs_net"] = work["net_flow"].abs()
+    work = work.sort_values(
+        ["risk_avg_person", "abs_net", "flag_rate_max", "flags_activas"],
+        ascending=[False, False, False, False],
+    ).head(max(1, int(top_n)))
+    work["ranking_prioridad"] = list(range(1, len(work) + 1))
+
+    def _direction(value: float) -> str:
+        if value > 0:
+            return "neto emisor"
+        if value < 0:
+            return "neto receptor"
+        return "equilibrado"
+
+    work["interpretabilidad"] = work.apply(
+        lambda row: (
+            f"En '{timeframe}', la persona {row.get('persona', 'sin_persona')} promedia "
+            f"riesgo {row.get('risk_avg_person', 0):.2f} ({row.get('risk_tier', 'BAJO')}) "
+            f"sobre {int(row.get('movements', 0))} movimientos. Emitió {int(row.get('n_tx_emit', 0))} "
+            f"tx por {_format_float(row.get('sum_emit', 0))} y recibió {int(row.get('n_tx_recv', 0))} "
+            f"tx por {_format_float(row.get('sum_recv', 0))}, quedando {_format_float(row.get('net_flow', 0))} "
+            f"({_direction(float(row.get('net_flow', 0)))}). "
+            f"Banderas destacadas: {row.get('banderas_destacadas', 'sin_banderas_destacadas')}. "
+            f"Desbalance mensual extremo al enviar en {row.get('desbalance_persona_tasa_meses_envia_extremo', 0):.0%} "
+            f"de {int(row.get('desbalance_persona_meses_totales', 0))} meses y al recibir en "
+            f"{row.get('desbalance_persona_tasa_meses_recibe_extremo', 0):.0%}."
+        ),
+        axis=1,
+    )
+
+    return work.reindex(columns=columns)
+
+
 QUESTION_FUNCTIONS: Dict[str, Callable[..., pd.DataFrame]] = {
     "q1_manager_nlp": question1_manager_nlp,
     "q2_manager_concepts": question2_manager_concepts,
@@ -3254,6 +3458,7 @@ QUESTION_FUNCTIONS: Dict[str, Callable[..., pd.DataFrame]] = {
     "q15_coordinated_cluster_signals": question15_coordinated_cluster_signals,
     "q16_multisignal_transactions": question16_multisignal_transactions,
     "q17_nlp_person_profiles": question17_nlp_person_profiles,
+    "q18_user_risk_scores": question18_user_risk_scores,
 }
 
 
@@ -3270,6 +3475,10 @@ for key, func in QUESTION_FUNCTIONS.items():
         "function_name": func.__name__,
         "interpretability_column": "interpretabilidad",
     }
+
+QUESTION_METADATA.get("q18_user_risk_scores", {}).update(
+    {"table_preview_rows": 10, "interpretability_max_rows": 10}
+)
 
 
 def run_all_questions(
@@ -3352,17 +3561,20 @@ def _print_summary(
         if preview.empty:
             preview = value.copy()
 
+        preview_rows = int(meta.get("table_preview_rows", max_rows))
+        interpret_rows = int(meta.get("interpretability_max_rows", max_rows))
+
         with pd.option_context("display.max_columns", None, "display.width", 120):
             print(f"Filas disponibles: {total_rows}")
             print("Resumen tabular (primeras filas):")
-            print(preview.head(max_rows))
+            print(preview.head(preview_rows))
 
         if interpret_col in value.columns:
             interpret_values = (
                 value[interpret_col]
                 .dropna()
                 .astype(str)
-                .head(meta.get("interpretability_max_rows", max_rows))
+                .head(interpret_rows)
             )
             if not interpret_values.empty:
                 print("Interpretabilidad destacada:")

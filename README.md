@@ -154,7 +154,7 @@ qa.desbalance_personas(reports).head()
 ```
 
 ### 5.1 Describir preguntas e interpretabilidad
-Para entender qué cubre cada pregunta Q1–Q17 directamente desde Colab puedes
+Para entender qué cubre cada pregunta Q1–Q18 directamente desde Colab puedes
 apoyarte en `colab_usage.question_overview` y en el resumen de
 interpretabilidad:
 
@@ -482,6 +482,32 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
 
     fig, ax = plt.subplots(figsize=(9, 5))
     plot_q17_nlp_person_profiles(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q18 – Personas con riesgo agregado y banderas** (`question18_user_risk_scores`):
+  - **Metodología:** utiliza `reports["persona"][timeframe]` para combinar el riesgo promedio (`risk_avg_person`) con el flujo neto (`sum_emit - sum_recv`), el desbalance mensual (`desbalance_persona_*`) y las tasas de señales por persona. Calcula un ranking priorizando riesgo, magnitud del desbalance y banderas activas, además de sintetizar las tres señales más destacadas por frecuencia relativa.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas en el ranking, 25 por defecto).
+  - **Salida en CLI:** el resumen estándar ahora lista hasta 10 filas (y sus interpretabilidades) para Q18, incluso si las personas adicionales tienen riesgo promedio 0.
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question18_user_risk_scores
+
+    q18 = question18_user_risk_scores(reports, timeframe="todo_el_tiempo", top_n=10)
+    print(q18[["persona", "risk_avg_person", "banderas_destacadas"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+
+    q18_chart = q18.sort_values("risk_avg_person", ascending=False).head(10)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.bar(q18_chart["persona"], q18_chart["risk_avg_person"], color="#d95f02")
+    ax.set_ylabel("Riesgo promedio")
+    ax.set_xlabel("Persona")
+    ax.set_title("Q18 – Ranking de riesgo promedio por persona")
+    plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     plt.show()
     ```

@@ -227,7 +227,7 @@ def run_full_colab_flow(
 
 
 def question_overview(repo_dir: Path | str = DEFAULT_TARGET_DIR) -> pd.DataFrame:
-    """Obtiene títulos, descripciones y metadatos de todas las preguntas Q1–Q17."""
+    """Obtiene títulos, descripciones y metadatos de todas las preguntas Q1–Q18."""
 
     add_repo_to_path(repo_dir)
     from experiment_questions import get_question_overview
