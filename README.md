@@ -153,6 +153,21 @@ plots.plot_person_imbalance_bar(reports)
 qa.desbalance_personas(reports).head()
 ```
 
+### 5.1 Describir preguntas e interpretabilidad
+Para entender qué cubre cada pregunta Q1–Q17 directamente desde Colab puedes
+apoyarte en `colab_usage.question_overview` y en el resumen de
+interpretabilidad:
+
+```python
+from colab_usage import question_overview, summarize_question_interpretability
+
+descripcion_preguntas = question_overview()
+descripcion_preguntas
+
+interpretabilidad = summarize_question_interpretabilidad(reports, timeframe="todo_el_tiempo")
+interpretabilidad[["question_id", "filas", "interpretabilidad_ejemplos"]].head()
+```
+
 ### 5. Generar un dataset de prueba diverso
 ```python
 from coi_fraud import generate_diverse_dataset
