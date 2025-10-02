@@ -119,8 +119,8 @@ from coi_fraud import generate_diverse_dataset
 dataset = generate_diverse_dataset()  # 10 000 filas por defecto
 ```
 
-## Preguntas de experimentación (Q1–Q17)
-El módulo `experiment_questions.py` genera respuestas tabulares para un conjunto creciente de preguntas recurrentes a partir del diccionario de `reports` producido por `run_pipeline`. Todas las funciones aceptan `timeframe` (por defecto `"todo_el_tiempo"`) y devuelven columnas de interpretabilidad en español listando la lógica aplicada.
+## Preguntas de experimentación (Q1–Q7)
+El módulo `experiment_questions.py` genera respuestas tabulares para siete preguntas recurrentes a partir del diccionario de `reports` producido por `run_pipeline`. Todas las funciones aceptan `timeframe` (por defecto `"todo_el_tiempo"`) y devuelven columnas de interpretabilidad en español listando la lógica aplicada.
 
 - **Q1 – Manager con conceptos NLP sospechosos** (`question1_manager_nlp`):
   - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes, categoría detectada, manager y subordinado para resumir `tx_count` y `monto_total` y generar textos explicativos.
@@ -216,63 +216,6 @@ El módulo `experiment_questions.py` genera respuestas tabulares para un conjunt
 
     fig, ax = plt.subplots(figsize=(8, 5))
     plot_q7_net_imbalance(reports, timeframe="todo_el_tiempo", ax=ax)
-    plt.tight_layout()
-    plt.show()
-    ```
-
-- **Q15 – Clusters/redes con señales coordinadas** (`question15_coordinated_cluster_signals`):
-  - **Metodología:** usa `reports["clusters_personas"][timeframe]` para evaluar tasas de alerta por cluster (yo-yo, smurf, ciclos, quid y referencia reutilizada), calcula cuántas señales están activas, resume participantes y montos y resalta la persona más desbalanceada del grupo.
-  - **Parámetros clave:** `timeframe`; `top_n` (número máximo de clusters a mostrar, por defecto 10).
-  - **Ejemplo CSV (`answers/q15_coordinated_cluster_signals.csv`):**
-    ```csv
-    timeframe,cluster_id,signals_activas,persona_mas_desbalanceada,interpretabilidad
-    todo_el_tiempo,cluster_1,0,P0147,"En 'todo_el_tiempo', el cluster_1 reúne 240 personas (P0001, P0002, P0004 y 237 más) con 285 transacciones que suman 5,740,102.03 y riesgo máximo 1.66. Se activan 0 de las 5 señales priorizadas (sin señales priorizadas activas). La persona más desbalanceada P0147 concentra 122,031.92 como neto receptor."
-    ```
-  - **Visualización rápida:**
-    ```python
-    import matplotlib.pyplot as plt
-    from experiment_visualizations import plot_q15_coordinated_cluster_signals
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    plot_q15_coordinated_cluster_signals(reports, timeframe="todo_el_tiempo", ax=ax)
-    plt.tight_layout()
-    plt.show()
-    ```
-
-- **Q16 – Transacciones individuales multisignales** (`question16_multisignal_transactions`):
-  - **Metodología:** inspecciona `reports["transaccion"][timeframe]`, calcula cuántas señales simultáneas activa cada operación (jerarquía, yo-yo, smurf, near-threshold, quid y cambio brusco), aplica umbrales adaptativos (≥3, ≥2 o ≥1) y construye narrativas completas con relación declarada y descripción original.
-  - **Parámetros clave:** `timeframe`; `top_n` (hasta 25 filas por defecto).
-  - **Ejemplo CSV (`answers/q16_multisignal_transactions.csv`):**
-    ```csv
-    timeframe,fecha_hora_ts,emisor,receptor,signals_activas,interpretabilidad
-    todo_el_tiempo,2025-07-27 17:25:00+00:00,P0050,P0289,1,"El 2025-07-27 17:25:00+00:00 se registró una transacción de 1,008.87 entre P0050 y P0289 con riesgo 1.44 (BAJO). Activa 1 señales simultáneas: near-threshold. Relación declarada: otro. Descripción: viatico - expansion_agronegocio ( ) [urgent follow-up] No hubo transacciones con múltiples señales; se listan las de una señal simultánea con mayor riesgo."
-    ```
-  - **Visualización rápida:**
-    ```python
-    import matplotlib.pyplot as plt
-    from experiment_visualizations import plot_q16_multisignal_transactions
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    plot_q16_multisignal_transactions(reports, timeframe="todo_el_tiempo", ax=ax)
-    plt.tight_layout()
-    plt.show()
-    ```
-
-- **Q17 – Personas priorizadas por NLP** (`question17_nlp_person_profiles`):
-  - **Metodología:** combina `reports["persona"][timeframe]` y `reports["persona_concepto"][timeframe]` para cuantificar movimientos totales, transacciones sospechosas NLP, conceptos únicos y densidad conceptual por alerta. También resume montos emitidos/recibidos, flujo neto y el concepto predominante para construir narrativas más profundas.
-  - **Parámetros clave:** `timeframe`; `top_n` (hasta 15 resultados por defecto).
-  - **Ejemplo CSV (`answers/q17_nlp_person_profiles.csv`):**
-    ```csv
-    timeframe,persona,movements,tx_sospechosas_nlp,conceptos_unicos,conceptos_unicos_por_tx,proporcion_sospechosa,risk_avg_person,sum_emit,sum_recv,net_flow,top_conceptos_display,conceptos_principales,concepto_predominante,interpretabilidad
-    todo_el_tiempo,sin_persona,0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,sin_top_conceptos,sin_conceptos,sin_concepto,No se identificaron personas con señales NLP para priorizar en la ventana 'todo_el_tiempo'.
-    ```
-  - **Visualización rápida:**
-    ```python
-    import matplotlib.pyplot as plt
-    from experiment_visualizations import plot_q17_nlp_person_profiles
-
-    fig, ax = plt.subplots(figsize=(9, 5))
-    plot_q17_nlp_person_profiles(reports, timeframe="todo_el_tiempo", ax=ax)
     plt.tight_layout()
     plt.show()
     ```
