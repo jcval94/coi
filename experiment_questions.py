@@ -6,7 +6,7 @@ import inspect
 import re
 from pathlib import Path
 from textwrap import fill
-from typing import Any, Callable, Dict, Iterable, Mapping
+from typing import Any, Callable, Dict, Iterable, Mapping, Literal
 
 try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import pandas as pd
@@ -38,6 +38,10 @@ from coi_fraud.text_utils import (
 
 DEFAULT_TIMEFRAME = "todo_el_tiempo"
 DEFAULT_OUTPUT_DIR = Path("answers")
+QUESTION1_DIRECTIONS: tuple[str, str] = (
+    "manager_a_subordinado",
+    "subordinado_a_manager",
+)
 NLP_CATEGORIES = (
     "SOBORNO",
     "FACILITACIÓN",
@@ -415,6 +419,8 @@ def question1_manager_nlp(
     reports: Mapping[str, Any],
     timeframe: str = DEFAULT_TIMEFRAME,
     categories: Iterable[str] = NLP_CATEGORIES,
+    *,
+    direction: Literal[QUESTION1_DIRECTIONS] = "manager_a_subordinado",
 ) -> pd.DataFrame:
     """Detecta pagos sospechosos entre managers y subordinados usando etiquetas NLP.
 
@@ -429,6 +435,10 @@ def question1_manager_nlp(
     categories
         Categorías NLP que deben buscarse dentro de los campos de texto; por
         defecto se emplea :data:`NLP_CATEGORIES`.
+    direction
+        Orientación del flujo de pagos a priorizar. Acepta ``"manager_a_subordinado"``
+        (por defecto) para pagos enviados por managers y ``"subordinado_a_manager"``
+        para el sentido inverso.
 
     Metodología
     -----------
@@ -462,6 +472,15 @@ def question1_manager_nlp(
             ]
         )
 
+    direction = str(direction)
+    if direction not in QUESTION1_DIRECTIONS:
+        valid = "', '".join(QUESTION1_DIRECTIONS)
+        raise ValueError(
+            "direction debe ser uno de '{valid}', se recibió '{direction}'".format(
+                valid=valid, direction=direction
+            )
+        )
+
     hits = _manager_nlp_hits(tx, categories)
     if hits.empty:
         return pd.DataFrame(
@@ -478,11 +497,18 @@ def question1_manager_nlp(
             ]
         )
 
+    if direction == "manager_a_subordinado":
+        manager_source = COL_SENDER_ID
+        subordinate_source = COL_RECEIVER_ID
+    else:
+        manager_source = COL_RECEIVER_ID
+        subordinate_source = COL_SENDER_ID
+
     hits["manager_user_id"] = (
-        hits[COL_RECEIVER_ID].fillna("").astype(str).replace({"": pd.NA})
+        hits[manager_source].fillna("").astype(str).replace({"": pd.NA})
     )
     hits["subordinado_user_id"] = (
-        hits[COL_SENDER_ID].fillna("").astype(str).replace({"": pd.NA})
+        hits[subordinate_source].fillna("").astype(str).replace({"": pd.NA})
     )
     hits = hits.dropna(subset=["manager_user_id", "subordinado_user_id"])
     if hits.empty:
@@ -520,22 +546,38 @@ def question1_manager_nlp(
     agg["timeframe"] = timeframe
     agg = agg.rename(columns={"matched_category": "nlp_concepto_sospechoso"})
     agg["nlp_concepto_crudo"] = agg["nlp_concepto_crudo"].fillna("")
-    agg["interpretabilidad"] = agg.apply(
-        lambda row: (
-            f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
-            f"el manager {row.get('manager_user_id', 'sin_manager')} recibió "
-            f"{int(row.get('tx_count', 0))} pagos del subordinado "
-            f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
-            f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
-            f"{_format_float(row.get('monto_total', 0))} en monto total."
-            + (
-                f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
-                if str(row.get("nlp_concepto_crudo", "")).strip()
-                else ""
+    if direction == "manager_a_subordinado":
+        def _build_message(row: pd.Series) -> str:
+            return (
+                f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
+                f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
+                f"{int(row.get('tx_count', 0))} pagos al subordinado "
+                f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
+                f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
+                f"{_format_float(row.get('monto_total', 0))} en monto total."
+                + (
+                    f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
+                    if str(row.get('nlp_concepto_crudo', '')).strip()
+                    else ""
+                )
             )
-        ),
-        axis=1,
-    )
+    else:
+        def _build_message(row: pd.Series) -> str:
+            return (
+                f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
+                f"el subordinado {row.get('subordinado_user_id', 'sin_subordinado')} envió "
+                f"{int(row.get('tx_count', 0))} pagos al manager "
+                f"{row.get('manager_user_id', 'sin_manager')} etiquetados como "
+                f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
+                f"{_format_float(row.get('monto_total', 0))} en monto total."
+                + (
+                    f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
+                    if str(row.get('nlp_concepto_crudo', '')).strip()
+                    else ""
+                )
+            )
+
+    agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
     columns = [
         "timeframe",
         "month_id",
