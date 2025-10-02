@@ -262,6 +262,85 @@ _LANGUAGE_SNIPPETS = [
     "sesión híbrida",
 ]
 
+_BEHAVIOR_CASE_TYPES = [
+    ("canal_etico", "Reporte canal ético"),
+    ("publicacion_interna", "Publicación en intranet"),
+    ("ticket_rrhh", "Ticket confidencial RRHH"),
+    ("nota_comunidad", "Nota de comunidad"),
+]
+
+_MEXICAN_SLANG = [
+    "neta que esto está gacho",
+    "órale con la situación",
+    "ya estuvo, banda",
+    "qué onda con ese rollo",
+    "se siente bien pesado, la neta",
+    "aguas porque se está pasando",
+    "la raza anda incómoda, wey",
+    "esto ya parece movida bien chueca",
+    "huele a transa desde lejos",
+]
+
+_INAPPROPRIATE_FLAGS = [
+    ("acoso verbal recurrente", "acoso"),
+    ("amenaza directa de despido si no ceden", "amenaza"),
+    ("hostigamiento constante por mensajes", "hostigamiento"),
+    ("chantaje para conseguir favores", "chantaje"),
+    ("solicitud de soborno para autorizar gastos", "soborno"),
+    ("coacción para cubrir irregularidades", "coacción"),
+    ("abuso de autoridad frente al equipo", "abuso"),
+    ("coperación indebida para tapar malos manejos", "coperación"),
+    ("complicidad abierta para desviar recursos", "complicidad"),
+    ("colusión descarada para maquillar reportes", "colusión"),
+]
+
+_BEHAVIOR_CONTEXTS = [
+    "durante las guardias nocturnas en planta",
+    "en los chats del proyecto de expansión",
+    "cuando revisan los viáticos en piso",
+    "en las juntas híbridas con proveedores",
+    "durante las capacitaciones obligatorias",
+    "en los relevos de turno del centro de soporte",
+    "al cierre de los reportes trimestrales",
+]
+
+_BEHAVIOR_ACTORS = [
+    "personal de soporte",
+    "equipo de compras",
+    "colegas de logística",
+    "staff de operaciones",
+    "compañeras de atención a clientes",
+    "ingeniería de campo",
+    "analistas de cumplimiento",
+]
+
+_BEHAVIOR_REACTIONS = [
+    "varias personas pidieron frenar el acoso de inmediato",
+    "se documentó la amenaza y se pidió apoyo formal",
+    "se levantó alerta por el hostigamiento constante",
+    "se denunció el chantaje ante los líderes",
+    "se rechazó el soborno y se solicitó investigación",
+    "se reportó la coacción con evidencia en archivos",
+    "se elevó el abuso para resguardar al equipo",
+]
+
+_BEHAVIOR_ESCALATION = [
+    "se considera incidente urgente",
+    "se marcó como caso crítico",
+    "amerita intervención inmediata",
+    "se propone activar protocolo de protección",
+    "se programó seguimiento prioritario",
+]
+
+_MISCONDUCT_TRANSACTION_HINTS = [
+    "la transacción huele a coperación chueca para encubrir irregularidades",
+    "parece un movimiento amañado, casi una coperación para callar el problema",
+    "hay señales de que la operación es pura complicidad para desviar lana",
+    "todo apunta a colusión descarada mezclada con esta transferencia",
+    "se detecta intento de coperación indebida dentro del flujo de pagos",
+    "alerta porque la transacción se siente como movida turbia en equipo",
+]
+
 _SCENARIOS = [
     ("payroll", 1.0, 32000, 6000),
     ("micro", 0.8, 1200, 300),
@@ -359,6 +438,56 @@ def _scenario_amount(rng: np.random.Generator) -> float:
     return float(np.clip(raw, 50.0, 250000.0))
 
 
+def _build_behavioral_case(rng: np.random.Generator) -> dict:
+    """Create a short narrative with slang and explicit misconduct cues."""
+
+    kind, label = _BEHAVIOR_CASE_TYPES[int(rng.integers(0, len(_BEHAVIOR_CASE_TYPES)))]
+    actor = rng.choice(_BEHAVIOR_ACTORS)
+    context = rng.choice(_BEHAVIOR_CONTEXTS)
+    flag_desc, keyword = _INAPPROPRIATE_FLAGS[int(rng.integers(0, len(_INAPPROPRIATE_FLAGS)))]
+    reaction = rng.choice(_BEHAVIOR_REACTIONS)
+    escalation = rng.choice(_BEHAVIOR_ESCALATION)
+    slang = rng.choice(_MEXICAN_SLANG)
+    bad_hint = rng.choice(_MISCONDUCT_TRANSACTION_HINTS)
+
+    title = f"{label} - {flag_desc.capitalize()}"
+    label_lower = label.lower()
+    body_template = rng.choice(
+        [
+            (
+                "{actor} reportó que {context} se perciben señales de {keyword}; "
+                "{slang}. {bad_hint}. Además, {reaction} y {escalation}."
+            ),
+            (
+                "Testimonio de {actor}: {context} persiste {flag_desc}, {slang}. "
+                "Según el equipo, {reaction}. {bad_hint}. También {escalation}."
+            ),
+            (
+                "En seguimiento a {label_lower}, {actor} detalló que {context} hay {flag_desc}; "
+                "{slang}. {bad_hint}. El registro menciona que {reaction} y {escalation}."
+            ),
+        ]
+    )
+    body = body_template.format(
+        actor=actor,
+        context=context,
+        flag_desc=flag_desc,
+        keyword=keyword,
+        slang=slang,
+        reaction=reaction,
+        escalation=escalation,
+        label=label,
+        label_lower=label_lower,
+        bad_hint=bad_hint,
+    )
+
+    return {
+        "behavior_case_type": kind,
+        "behavior_case_title": title,
+        "behavior_case_body": body,
+    }
+
+
 def generate_diverse_dataset(n_records: int = 10_000, seed: int | None = 42) -> pd.DataFrame:
     """Create a synthetic dataframe with 10k highly diverse transactions.
 
@@ -449,6 +578,8 @@ def generate_diverse_dataset(n_records: int = 10_000, seed: int | None = 42) -> 
                 ),
             }
         )
+
+        row.update(_build_behavioral_case(rng))
 
         rows.append(row)
 
