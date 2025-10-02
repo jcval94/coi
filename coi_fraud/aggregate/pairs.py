@@ -1,11 +1,24 @@
 import pandas as pd
 
 from ..interpret.pair import pair_interpretation
-from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_RELATION, COL_SENDER_ID
+from ..schemas import (
+    COL_AMOUNT,
+    COL_DESCRIPTION,
+    COL_RECEIVER_ID,
+    COL_RELATION,
+    COL_SENDER_ID,
+)
 
 
 CASE12_MIN_TX = 3
 CASE12_OFUSCATED_TOL_RATIO = 0.03
+
+
+def _collect_texts(series: pd.Series) -> list[str]:
+    if series is None or series.empty:
+        return []
+    texts = series.astype("string").fillna("").str.strip()
+    return [text for text in texts.tolist() if text]
 
 
 def _compute_case12_tandas(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,6 +108,7 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
                 "nlp_par_total_transacciones_sospechosas",
                 "nlp_par_conceptos_sospechosos_unicos",
                 "nlp_par_top_conceptos",
+                "nlp_par_top_textos",
             ]
         )
 
@@ -122,9 +136,17 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-    suspicious_mask = tmp.get("nlp_concepto_sospechoso").fillna("").astype("string").str.strip() != ""
+    suspicious_mask = (
+        tmp.get("nlp_concepto_sospechoso").fillna("").astype("string").str.strip() != ""
+    )
     tmp_suspicious = tmp.loc[suspicious_mask].copy()
     if not tmp_suspicious.empty:
+        text_series = tmp_suspicious.get(COL_DESCRIPTION)
+        if text_series is None:
+            text_series = pd.Series("", index=tmp_suspicious.index, dtype="string")
+        else:
+            text_series = text_series.astype("string").fillna("").str.strip()
+        tmp_suspicious["_nlp_texto_original"] = text_series
         concept_counts = (
             tmp_suspicious.groupby("pair", observed=True)["nlp_concepto_sospechoso"]
             .agg(
@@ -134,9 +156,14 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
             .reset_index()
         )
         topc = (
-            tmp_suspicious.groupby(["pair", "nlp_concepto_sospechoso"], observed=True)[COL_AMOUNT]
-            .count()
-            .reset_index(name="cnt")
+            tmp_suspicious.groupby(
+                ["pair", "nlp_concepto_sospechoso"], observed=True
+            )
+            .agg(
+                cnt=(COL_AMOUNT, "count"),
+                textos=("_nlp_texto_original", _collect_texts),
+            )
+            .reset_index()
         )
         topc = (
             topc.sort_values(["pair", "cnt"], ascending=[True, False])
@@ -144,7 +171,11 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
             .head(3)
         )
         tops = (
-            topc.groupby("pair")["nlp_concepto_sospechoso"].apply(list).rename("nlp_par_top_conceptos")
+            topc.groupby("pair")
+            .agg(
+                nlp_par_top_conceptos=("nlp_concepto_sospechoso", list),
+                nlp_par_top_textos=("textos", list),
+            )
         )
         agg = agg.merge(concept_counts, on="pair", how="left")
         agg = agg.merge(tops, on="pair", how="left")
@@ -152,6 +183,7 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
         agg["nlp_par_total_transacciones_sospechosas"] = 0
         agg["nlp_par_conceptos_sospechosos_unicos"] = 0
         agg["nlp_par_top_conceptos"] = [[] for _ in range(len(agg))]
+        agg["nlp_par_top_textos"] = [[] for _ in range(len(agg))]
 
     for col in [
         "nlp_par_total_transacciones_sospechosas",
@@ -165,6 +197,12 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
         agg["nlp_par_top_conceptos"] = [[] for _ in range(len(agg))]
     else:
         agg["nlp_par_top_conceptos"] = agg["nlp_par_top_conceptos"].apply(
+            lambda x: x if isinstance(x, list) else []
+        )
+    if "nlp_par_top_textos" not in agg:
+        agg["nlp_par_top_textos"] = [[] for _ in range(len(agg))]
+    else:
+        agg["nlp_par_top_textos"] = agg["nlp_par_top_textos"].apply(
             lambda x: x if isinstance(x, list) else []
         )
 
@@ -184,4 +222,5 @@ def build_pair_monthly(df: pd.DataFrame) -> pd.DataFrame:
     agg["interp_pair"] = agg.apply(pair_interpretation, axis=1)
     agg = agg.sort_values(["risk_max", "tx_sum"], ascending=[False, False])
     agg["top_conceptos"] = agg["nlp_par_top_conceptos"]
+    agg["top_textos"] = agg["nlp_par_top_textos"]
     return agg
