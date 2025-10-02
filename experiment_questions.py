@@ -97,8 +97,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--rows",
         type=int,
-        default=10_000,
-        help="Filas a generar cuando se use el dataset sintético (por defecto: 10000).",
+        default=6_000,
+        help="Filas a generar cuando se use el dataset sintético (por defecto: 6000).",
     )
     parser.add_argument(
         "--seed",

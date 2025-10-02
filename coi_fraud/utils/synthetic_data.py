@@ -476,13 +476,13 @@ def _build_behavioral_case(rng: np.random.Generator) -> dict:
     }
 
 
-def generate_diverse_dataset(n_records: int = 10_000, seed: int | None = 42) -> pd.DataFrame:
-    """Create a synthetic dataframe with 10k highly diverse transactions.
+def generate_diverse_dataset(n_records: int = 6_000, seed: int | None = 42) -> pd.DataFrame:
+    """Create a synthetic dataframe with 6k highly diverse transactions.
 
     Parameters
     ----------
     n_records:
-        Número de transacciones a generar. Por defecto 10 000.
+        Número de transacciones a generar. Por defecto 6 000.
     seed:
         Semilla opcional para obtener resultados reproducibles.
 
@@ -496,7 +496,8 @@ def generate_diverse_dataset(n_records: int = 10_000, seed: int | None = 42) -> 
         raise ValueError("n_records debe ser mayor a 0")
 
     rng = np.random.default_rng(seed)
-    personas = _build_personas(rng, size=max(320, n_records // 20))
+    persona_pool = max(240, max(1, n_records // 24))
+    personas = _build_personas(rng, size=persona_pool)
     persona_ids = [p.user_id for p in personas]
 
     start = datetime(2020, 1, 1)
