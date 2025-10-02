@@ -1,6 +1,7 @@
 
 import argparse
 import pandas as pd
+
 from . import run_pipeline
 from .io.export import export_tables
 
@@ -14,8 +15,10 @@ def main():
     reports = run_pipeline(df, language="es")
     paths = export_tables(reports, args.out)
     print("\nExport listo:")
-    for k,v in paths.items():
-        print(f"  - {k}: {v}")
+    for key, path in paths.items():
+        print(f"  - {key}: {path}")
+
+    # Prueba manual rápida: python -m coi_fraud --csv <archivo.csv> --out ./exports
 
 if __name__ == "__main__":
     main()
