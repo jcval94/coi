@@ -19,6 +19,8 @@ from typing import Dict, Iterable, Mapping
 
 import pandas as pd
 
+from experiment_questions import DEFAULT_TIMEFRAME
+
 try:  # pragma: no cover - solo válido en Colab con IPython
     from IPython import get_ipython
 except ImportError:  # pragma: no cover - entorno estándar
