@@ -30,6 +30,7 @@ from experiment_questions import (
     question15_coordinated_cluster_signals,
     question16_multisignal_transactions,
     question17_nlp_person_profiles,
+    question18_user_risk_scores,
 )
 
 
@@ -855,6 +856,109 @@ def plot_q17_nlp_person_profiles(
     return axis
 
 
+def plot_q18_user_risk_scores(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 15,
+) -> Axes:
+    """Grafica las personas priorizadas por riesgo promedio y desbalance."""
+
+    data = question18_user_risk_scores(reports, timeframe, top_n=top_n)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+
+    ranking = pd.to_numeric(data.get("ranking_prioridad", pd.Series(dtype=int)), errors="coerce")
+    risk_avg = pd.to_numeric(data.get("risk_avg_person", pd.Series(dtype=float)), errors="coerce")
+    ranking_max = ranking.fillna(0).max() if not ranking.empty else 0
+    risk_max = risk_avg.fillna(0.0).max() if not risk_avg.empty else 0.0
+    if data.empty or (ranking_max <= 0 and risk_max <= 0.0):
+        return _render_empty_chart(
+            axis,
+            "q18_user_risk_scores",
+            timeframe,
+            "Sin personas priorizadas por riesgo en el periodo seleccionado.",
+        )
+
+    work = data.copy()
+    if "persona" not in work:
+        work["persona"] = "sin_persona"
+    work["persona"] = work["persona"].fillna("sin_persona").astype(str)
+
+    if "risk_tier" not in work:
+        work["risk_tier"] = "SIN_RIESGO"
+    work["risk_tier"] = work["risk_tier"].fillna("SIN_RIESGO").astype(str)
+
+    if "ranking_prioridad" in work:
+        work["ranking_prioridad"] = (
+            pd.to_numeric(work["ranking_prioridad"], errors="coerce").fillna(0).astype(int)
+        )
+    else:
+        work["ranking_prioridad"] = list(range(1, len(work) + 1))
+
+    if "risk_avg_person" in work:
+        work["risk_avg_person"] = (
+            pd.to_numeric(work["risk_avg_person"], errors="coerce").fillna(0.0)
+        )
+    else:
+        work["risk_avg_person"] = 0.0
+
+    if "net_flow" in work:
+        work["net_flow"] = pd.to_numeric(work["net_flow"], errors="coerce").fillna(0.0)
+    else:
+        work["net_flow"] = 0.0
+
+    if "movements" in work:
+        work["movements"] = (
+            pd.to_numeric(work["movements"], errors="coerce").fillna(0).astype(int)
+        )
+    else:
+        work["movements"] = 0
+
+    work = work.sort_values(
+        ["ranking_prioridad", "risk_avg_person", "movements", "net_flow"],
+        ascending=[True, False, False, False],
+    ).head(max(1, int(top_n)))
+
+    base_palette = {
+        "ALTO": "#b22222",
+        "MEDIO": "#ff8c00",
+        "BAJO": "#1f77b4",
+        "SIN_RIESGO": "#6c757d",
+    }
+    palette = {tier: base_palette.get(tier, "#17becf") for tier in work["risk_tier"].unique()}
+
+    sns.barplot(
+        data=work,
+        x="risk_avg_person",
+        y="persona",
+        hue="risk_tier",
+        palette=palette,
+        dodge=False,
+        ax=axis,
+    )
+
+    for patch, (_, row) in zip(axis.patches, work.iterrows()):
+        axis.text(
+            patch.get_width() + 0.02,
+            patch.get_y() + patch.get_height() / 2,
+            (
+                f"rank {int(row.get('ranking_prioridad', 0))} · "
+                f"mov={int(row.get('movements', 0))} · "
+                f"net={row.get('net_flow', 0.0):,.0f}"
+            ),
+            va="center",
+            fontsize=8,
+            color="#333333",
+        )
+
+    _apply_plot_metadata(axis, "q18_user_risk_scores", timeframe)
+    axis.set_xlabel("Riesgo promedio de la persona")
+    axis.set_ylabel("Persona priorizada")
+    axis.legend(title="Nivel de riesgo", loc="best")
+    return axis
+
+
 __all__ = [
     "plot_q1_manager_nlp",
     "plot_q2_manager_concepts",
@@ -873,4 +977,5 @@ __all__ = [
     "plot_q15_coordinated_cluster_signals",
     "plot_q16_multisignal_transactions",
     "plot_q17_nlp_person_profiles",
+    "plot_q18_user_risk_scores",
 ]
