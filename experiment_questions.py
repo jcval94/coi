@@ -935,6 +935,1305 @@ def question7_net_imbalance(
     return work.reindex(columns=columns)
 
 
+def question8_case13_new_employees(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
+) -> pd.DataFrame:
+    personas = _get_section(reports, "persona", timeframe)
+    required = [
+        "persona",
+        "caso13_persona_tx_recibidas",
+        "caso13_persona_monto_total",
+        "caso13_persona_emisores_unicos",
+        "caso13_persona_tx_altos",
+        "caso13_persona_monto_promedio",
+        "caso13_persona_flag_nuevo_receptor_altos_montos",
+    ]
+    if personas.empty or not set(required).issubset(personas.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    work = personas[required].copy()
+    mask = work["caso13_persona_flag_nuevo_receptor_altos_montos"].fillna(0).astype(int) > 0
+    work = work.loc[mask].copy()
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    work["timeframe"] = timeframe
+    work = work.sort_values(
+        ["caso13_persona_tx_altos", "caso13_persona_monto_total"], ascending=[False, False]
+    )
+    work["interpretabilidad"] = work.apply(
+        lambda row: (
+            f"En la ventana '{timeframe}', la persona {_coalesce_str(row.get('persona'), default='sin_persona')} "
+            f"es un receptor con antigüedad ≤6 meses que recibió "
+            f"{int(row.get('caso13_persona_tx_recibidas', 0))} transferencias totales "
+            f"desde {int(row.get('caso13_persona_emisores_unicos', 0))} emisores únicos, "
+            f"de las cuales {int(row.get('caso13_persona_tx_altos', 0))} fueron de monto alto (percentil 90). "
+            f"El flujo acumulado asciende a {_format_float(row.get('caso13_persona_monto_total', 0))} "
+            f"con un promedio por transacción de {_format_float(row.get('caso13_persona_monto_promedio', 0))}."
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "persona",
+        "caso13_persona_tx_recibidas",
+        "caso13_persona_monto_total",
+        "caso13_persona_emisores_unicos",
+        "caso13_persona_tx_altos",
+        "caso13_persona_monto_promedio",
+        "interpretabilidad",
+    ]
+    return work.reindex(columns=columns)
+
+
+def question9_case14_veterans_from_newcomers(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
+) -> pd.DataFrame:
+    personas = _get_section(reports, "persona", timeframe)
+    required = [
+        "persona",
+        "caso14_persona_tx_de_emisores_nuevos",
+        "caso14_persona_monto_de_emisores_nuevos",
+        "caso14_persona_emisores_nuevos_unicos",
+        "caso14_persona_monto_promedio_de_emisores_nuevos",
+        "caso14_persona_flag_antiguo_recibe_de_nuevos",
+    ]
+    if personas.empty or not set(required).issubset(personas.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "interpretabilidad",
+            ]
+        )
+
+    work = personas[required].copy()
+    mask = work["caso14_persona_flag_antiguo_recibe_de_nuevos"].fillna(0).astype(int) > 0
+    work = work.loc[mask].copy()
+    relaxed = False
+    heuristic = False
+
+    if work.empty:
+        relaxed = True
+        fallback_mask = (
+            work_original := personas[required].copy()
+        )["caso14_persona_tx_de_emisores_nuevos"].fillna(0).astype(int) > 0
+        fallback_mask &= (
+            work_original["caso14_persona_emisores_nuevos_unicos"].fillna(0).astype(int)
+            > 0
+        )
+        work = work_original.loc[fallback_mask].copy()
+
+    if work.empty:
+        tx = _get_section(reports, "transaccion", timeframe)
+
+        def _heuristic_case14(transacciones: pd.DataFrame) -> pd.DataFrame:
+            if transacciones.empty:
+                return pd.DataFrame()
+            cols = {
+                COL_SENDER_ID,
+                COL_RECEIVER_ID,
+                COL_AMOUNT,
+                "user_antiguedad_anios",
+                "receptor_antiguedad_anios",
+            }
+            if not cols.issubset(transacciones.columns):
+                return pd.DataFrame()
+            base = transacciones[list(cols)].copy()
+            base["user_antiguedad_anios"] = pd.to_numeric(
+                base["user_antiguedad_anios"], errors="coerce"
+            )
+            base["receptor_antiguedad_anios"] = pd.to_numeric(
+                base["receptor_antiguedad_anios"], errors="coerce"
+            )
+            base = base.dropna(subset=["user_antiguedad_anios", "receptor_antiguedad_anios"])
+            if base.empty:
+                return pd.DataFrame()
+
+            thresholds = [
+                (0.5, 5.0),
+                (1.0, 4.0),
+                (1.5, 3.5),
+            ]
+            selected: pd.DataFrame | None = None
+            applied: tuple[float, float] | None = None
+            for young, veteran in thresholds:
+                mask_new = base["user_antiguedad_anios"] <= young
+                mask_old = base["receptor_antiguedad_anios"] >= veteran
+                candidate = base.loc[mask_new & mask_old].copy()
+                if not candidate.empty:
+                    selected = candidate
+                    applied = (young, veteran)
+                    break
+            if selected is None:
+                quantiles = base[["user_antiguedad_anios", "receptor_antiguedad_anios"]].quantile(
+                    [0.25, 0.75]
+                )
+                young_q = float(quantiles.loc[0.25, "user_antiguedad_anios"])
+                veteran_q = float(quantiles.loc[0.75, "receptor_antiguedad_anios"])
+                candidate = base.loc[
+                    (base["user_antiguedad_anios"] <= young_q)
+                    & (base["receptor_antiguedad_anios"] >= veteran_q)
+                ].copy()
+                if candidate.empty():
+                    candidate = base.nsmallest(100, "user_antiguedad_anios").copy()
+                selected = candidate
+                applied = (young_q, veteran_q)
+            if selected is None or selected.empty():
+                return pd.DataFrame()
+
+            grouped = (
+                selected.groupby(COL_RECEIVER_ID, observed=True)
+                .agg(
+                    caso14_persona_tx_de_emisores_nuevos=(COL_AMOUNT, "count"),
+                    caso14_persona_monto_de_emisores_nuevos=(COL_AMOUNT, "sum"),
+                    caso14_persona_emisores_nuevos_unicos=(COL_SENDER_ID, "nunique"),
+                )
+                .reset_index()
+            )
+            grouped.rename(columns={COL_RECEIVER_ID: "persona"}, inplace=True)
+            grouped["caso14_persona_monto_promedio_de_emisores_nuevos"] = (
+                grouped["caso14_persona_monto_de_emisores_nuevos"]
+                / grouped["caso14_persona_tx_de_emisores_nuevos"].replace(0, pd.NA)
+            )
+            grouped["caso14_persona_monto_promedio_de_emisores_nuevos"] = (
+                grouped["caso14_persona_monto_promedio_de_emisores_nuevos"].fillna(0.0)
+            )
+            if applied is not None:
+                grouped["_heuristic_note"] = (
+                    f"emisor≤{applied[0]:.1f}a / receptor≥{applied[1]:.1f}a"
+                )
+            return grouped
+
+        heuristic_df = _heuristic_case14(tx)
+        if not heuristic_df.empty:
+            heuristic = True
+            if "_heuristic_note" in heuristic_df:
+                heuristic_df["_heuristic_note"] = heuristic_df["_heuristic_note"].astype(str)
+            else:
+                heuristic_df["_heuristic_note"] = ""
+            work = heuristic_df
+
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "interpretabilidad",
+            ]
+        )
+
+    work["timeframe"] = timeframe
+    work = work.sort_values(
+        ["caso14_persona_tx_de_emisores_nuevos", "caso14_persona_monto_de_emisores_nuevos"],
+        ascending=[False, False],
+    )
+    work["interpretabilidad"] = work.apply(
+        lambda row: (
+            f"Dentro de '{timeframe}', la persona {_coalesce_str(row.get('persona'), default='sin_persona')} "
+            f"(antigüedad ≥5 años) recibió {int(row.get('caso14_persona_tx_de_emisores_nuevos', 0))} pagos "
+            f"desde recién ingresados (≤6 meses), provenientes de "
+            f"{int(row.get('caso14_persona_emisores_nuevos_unicos', 0))} emisores distintos. "
+            f"Estos movimientos suman {_format_float(row.get('caso14_persona_monto_de_emisores_nuevos', 0))} "
+            f"con un promedio individual de {_format_float(row.get('caso14_persona_monto_promedio_de_emisores_nuevos', 0))}."
+            + (
+                " Se relajó el criterio original para mostrar relaciones con indicios "
+                "incipientes." if relaxed and not row.get("caso14_persona_flag_antiguo_recibe_de_nuevos") else ""
+            )
+            + (
+                (" Se aplicó una heurística por antigüedad relativa." if heuristic else "")
+                if not heuristic
+                else (
+                    f" Heurística por antigüedad relativa ({row.get('_heuristic_note')}) activada."
+                    if row.get("_heuristic_note")
+                    else " Se aplicó una heurística por antigüedad relativa."
+                )
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "persona",
+        "caso14_persona_tx_de_emisores_nuevos",
+        "caso14_persona_monto_de_emisores_nuevos",
+        "caso14_persona_emisores_nuevos_unicos",
+        "caso14_persona_monto_promedio_de_emisores_nuevos",
+        "interpretabilidad",
+    ]
+    return work.reindex(columns=columns)
+
+
+def question10_yoyo_streaks(
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    min_consecutive: int = 2,
+    risk_threshold: float = 1.8,
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    required = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        "fecha_hora_ts",
+        "month_id",
+        "sig_yoyo",
+        "risk_score",
+    ]
+    if tx.empty or not set(required).issubset(tx.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "par_bidir",
+                "racha_max_yo_yo",
+                "tx_yo_yo_totales",
+                "meses_con_yo_yo",
+                "riesgo_max_par",
+                "riesgo_promedio_par",
+                "riesgo_max_yo_yo",
+                "riesgo_promedio_yo_yo",
+                "interpretabilidad",
+            ]
+        )
+
+    work = tx[required].copy()
+    work["sig_yoyo"] = work["sig_yoyo"].fillna(False).astype(bool)
+    heuristic = False
+    heuristic_note = None
+    if not work["sig_yoyo"].any():
+        heuristic = True
+        work["par_bidir"] = work.apply(
+            lambda row: "⇄".join(
+                sorted([str(row[COL_SENDER_ID]), str(row[COL_RECEIVER_ID])])
+            ),
+            axis=1,
+        )
+
+        def _derive_flags(group: pd.DataFrame, hour_limit: float) -> pd.DataFrame:
+            ordered = group.sort_values("fecha_hora_ts").copy()
+            flags = [False] * len(ordered)
+            timestamps = ordered["fecha_hora_ts"].tolist()
+            senders = ordered[COL_SENDER_ID].astype(str).tolist()
+            receivers = ordered[COL_RECEIVER_ID].astype(str).tolist()
+            for idx in range(len(ordered)):
+                curr_ts = timestamps[idx]
+                curr_sender = senders[idx]
+                curr_receiver = receivers[idx]
+                for prev_idx in range(idx - 1, -1, -1):
+                    delta_hours = (curr_ts - timestamps[prev_idx]).total_seconds() / 3600.0
+                    if delta_hours > hour_limit:
+                        break
+                    if (
+                        senders[prev_idx] == curr_receiver
+                        and receivers[prev_idx] == curr_sender
+                    ):
+                        flags[idx] = True
+                        flags[prev_idx] = True
+                        break
+            ordered["sig_yoyo"] = flags
+            return ordered
+
+        candidate = None
+        for hour_limit in (8.0, 24.0, 72.0):
+            derived = (
+                work.groupby("par_bidir", observed=True, group_keys=False)
+                .apply(lambda g: _derive_flags(g, hour_limit))
+                .reset_index(drop=True)
+            )
+            derived["sig_yoyo"] = derived["sig_yoyo"].fillna(False).astype(bool)
+            if derived["sig_yoyo"].any():
+                candidate = derived
+                heuristic_note = f"≤{int(hour_limit)} h"
+                break
+        if candidate is None:
+            dir_counts = (
+                work.groupby("par_bidir", observed=True)[COL_SENDER_ID]
+                .transform("nunique")
+            )
+            mask_pairs = dir_counts > 1
+            if not mask_pairs.any():
+                return pd.DataFrame(
+                    columns=[
+                        "timeframe",
+                        "par_bidir",
+                        "racha_max_yo_yo",
+                        "tx_yo_yo_totales",
+                        "meses_con_yo_yo",
+                        "riesgo_max_par",
+                        "riesgo_promedio_par",
+                        "riesgo_max_yo_yo",
+                        "riesgo_promedio_yo_yo",
+                        "interpretabilidad",
+                    ]
+                )
+            candidate = work.copy()
+            candidate["sig_yoyo"] = mask_pairs
+            heuristic_note = "sin ventana"
+        work = candidate
+
+    work = work.sort_values("fecha_hora_ts")
+    work["par_bidir"] = work.apply(
+        lambda row: "⇄".join(
+            sorted([str(row[COL_SENDER_ID]), str(row[COL_RECEIVER_ID])])
+        ),
+        axis=1,
+    )
+
+    def _pair_stats(group: pd.DataFrame) -> pd.Series:
+        ordered = group.sort_values("fecha_hora_ts")
+        flags = ordered["sig_yoyo"].astype(bool).tolist()
+        months = (
+            ordered.loc[ordered["sig_yoyo"], "month_id"].dropna().astype(str).unique()
+            if ordered["sig_yoyo"].any()
+            else []
+        )
+        risk_scores = ordered.loc[ordered["sig_yoyo"], "risk_score"].astype(float)
+        longest = 0
+        current = 0
+        total_hits = int(flags.count(True))
+        for flag in flags:
+            if flag:
+                current += 1
+                if current > longest:
+                    longest = current
+            else:
+                current = 0
+        return pd.Series(
+            {
+                "racha_max_yo_yo": int(longest),
+                "tx_yo_yo_totales": int(total_hits),
+                "meses_con_yo_yo": int(len(months)),
+                "riesgo_max_yo_yo": float(risk_scores.max()) if not risk_scores.empty else 0.0,
+                "riesgo_promedio_yo_yo": float(risk_scores.mean()) if not risk_scores.empty else 0.0,
+            }
+        )
+
+    streaks = work.groupby("par_bidir", observed=True).apply(_pair_stats).reset_index()
+    streaks = streaks[streaks["tx_yo_yo_totales"] > 0]
+    if streaks.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "par_bidir",
+                "racha_max_yo_yo",
+                "tx_yo_yo_totales",
+                "meses_con_yo_yo",
+                "riesgo_max_par",
+                "riesgo_promedio_par",
+                "riesgo_max_yo_yo",
+                "riesgo_promedio_yo_yo",
+                "interpretabilidad",
+            ]
+        )
+
+    pares = _get_section(reports, "par_personas", timeframe)
+    if pares.empty or "pair" not in pares:
+        pair_risk = pd.DataFrame(columns=["par_bidir", "riesgo_max_par", "riesgo_promedio_par"])
+    else:
+        tmp = pares[["pair", "risk_max", "risk_avg"]].copy()
+        tmp["par_bidir"] = tmp["pair"].astype(str).apply(
+            lambda text: "⇄".join(sorted(text.split("→"))) if "→" in text else text
+        )
+        pair_risk = (
+            tmp.groupby("par_bidir", observed=True)
+            .agg(
+                riesgo_max_par=("risk_max", "max"),
+                riesgo_promedio_par=("risk_avg", "mean"),
+            )
+            .reset_index()
+        )
+
+    merged = streaks.merge(pair_risk, on="par_bidir", how="left")
+    merged["riesgo_max_par"] = merged["riesgo_max_par"].fillna(0.0)
+    merged["riesgo_promedio_par"] = merged["riesgo_promedio_par"].fillna(0.0)
+
+    filtered = merged[
+        (merged["racha_max_yo_yo"] >= int(min_consecutive))
+        & (merged["riesgo_max_par"] >= float(risk_threshold))
+    ].copy()
+    relaxed = False
+    if filtered.empty:
+        relaxed = True
+        relaxed_min = max(int(min_consecutive) - 1, 1)
+        candidate = merged[merged["racha_max_yo_yo"] >= relaxed_min].copy()
+        if not candidate.empty:
+            dynamic_threshold = candidate["riesgo_max_par"].quantile(0.6)
+            if pd.isna(dynamic_threshold):
+                dynamic_threshold = candidate["riesgo_max_par"].max()
+            candidate = candidate[candidate["riesgo_max_par"] >= dynamic_threshold]
+        if candidate.empty:
+            candidate = merged.sort_values(
+                ["racha_max_yo_yo", "tx_yo_yo_totales", "riesgo_max_par"],
+                ascending=[False, False, False],
+            ).head(25)
+        filtered = candidate.copy()
+        if filtered.empty:
+            return pd.DataFrame(
+                columns=[
+                    "timeframe",
+                    "par_bidir",
+                    "racha_max_yo_yo",
+                    "tx_yo_yo_totales",
+                    "meses_con_yo_yo",
+                    "riesgo_max_par",
+                    "riesgo_promedio_par",
+                    "riesgo_max_yo_yo",
+                    "riesgo_promedio_yo_yo",
+                    "interpretabilidad",
+                ]
+            )
+
+    filtered["timeframe"] = timeframe
+    filtered = filtered.sort_values(
+        ["riesgo_max_par", "tx_yo_yo_totales"], ascending=[False, False]
+    )
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"Durante '{timeframe}', el par bidireccional {row.get('par_bidir', 'sin_par')} registró "
+            f"{int(row.get('tx_yo_yo_totales', 0))} transacciones clasificadas como Yo-Yo "
+            f"en {int(row.get('meses_con_yo_yo', 0))} meses distintos, con una racha máxima de "
+            f"{int(row.get('racha_max_yo_yo', 0))} eventos consecutivos. El riesgo máximo observado "
+            f"para el par alcanzó {row.get('riesgo_max_par', 0.0):.2f} (promedio {row.get('riesgo_promedio_par', 0.0):.2f}), "
+            f"mientras que las transacciones Yo-Yo llegaron a un riesgo máximo de {row.get('riesgo_max_yo_yo', 0.0):.2f}."
+            + (
+                " Se empleó un umbral de riesgo flexible para exponer la racha cuando el criterio "
+                "estricto no devolvió casos." if relaxed and row.get("riesgo_max_par", 0.0) < float(risk_threshold) else ""
+            )
+            + (
+                f" La racha se identificó con una heurística de ida y vuelta {heuristic_note or 'sin ventana'} ante la ausencia de banderas explícitas."
+                if heuristic
+                else ""
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "par_bidir",
+        "racha_max_yo_yo",
+        "tx_yo_yo_totales",
+        "meses_con_yo_yo",
+        "riesgo_max_par",
+        "riesgo_promedio_par",
+        "riesgo_max_yo_yo",
+        "riesgo_promedio_yo_yo",
+        "interpretabilidad",
+    ]
+    return filtered.reindex(columns=columns)
+
+
+def question11_near_threshold_structuring(
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    min_months: int = 3,
+    delta_limit: float = 10.0,
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    required = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        "month_id",
+        COL_AMOUNT,
+        "sig_near_thr",
+        "risk_score",
+    ]
+    if tx.empty or not set(required).issubset(tx.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_near",
+                "tx_near_totales",
+                "monto_total_near",
+                "delta_promedio",
+                "riesgo_max",
+                "interpretabilidad",
+            ]
+        )
+
+    extra_cols: list[str] = []
+    if "feat_delta_near_thr" in tx.columns:
+        extra_cols.append("feat_delta_near_thr")
+    work = tx[required + extra_cols].copy()
+    work["sig_near_thr"] = work["sig_near_thr"].fillna(False).astype(bool)
+    work[COL_AMOUNT] = pd.to_numeric(work[COL_AMOUNT], errors="coerce")
+
+    delta_estimated = "feat_delta_near_thr" not in work.columns
+
+    def _estimate_delta(amounts: pd.Series) -> pd.Series:
+        thresholds = [
+            500,
+            750,
+            1000,
+            1500,
+            2000,
+            3000,
+            5000,
+            7500,
+            10000,
+            15000,
+            20000,
+        ]
+        diff = pd.DataFrame({thr: (amounts - thr).abs() for thr in thresholds})
+        return diff.min(axis=1)
+
+    if delta_estimated:
+        work["feat_delta_near_thr"] = _estimate_delta(work[COL_AMOUNT].fillna(0.0))
+    else:
+        work["feat_delta_near_thr"] = pd.to_numeric(
+            work["feat_delta_near_thr"], errors="coerce"
+        )
+
+    mask = work["sig_near_thr"] & (work["feat_delta_near_thr"] <= float(delta_limit))
+    near = work.loc[mask].copy()
+    relaxed_delta = False
+    heuristic = False
+    strategy_note: str | None = None
+    if near.empty:
+        relaxed_delta = True
+        alt_mask = work["feat_delta_near_thr"] <= float(delta_limit)
+        near = work.loc[alt_mask].copy()
+        strategy_note = "delta≤limite"
+    if near.empty:
+        alt_mask = work["feat_delta_near_thr"] <= float(delta_limit) * 2
+        near = work.loc[alt_mask].copy()
+        strategy_note = "delta≤2x"
+    if near.empty:
+        heuristic = True
+        quantile = work["feat_delta_near_thr"].quantile(0.15)
+        if pd.isna(quantile) or quantile <= 0:
+            quantile = work["feat_delta_near_thr"].median()
+        near = work.loc[work["feat_delta_near_thr"] <= quantile].copy()
+        strategy_note = f"delta≤p15 ({quantile:.2f})"
+    if near.empty:
+        heuristic = True
+        near = work.nsmallest(50, "feat_delta_near_thr").copy()
+        strategy_note = "top_deltas"
+    if near.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_near",
+                "tx_near_totales",
+                "monto_total_near",
+                "delta_promedio",
+                "riesgo_max",
+                "interpretabilidad",
+            ]
+        )
+
+    near["pair"] = near[COL_SENDER_ID].astype(str) + "→" + near[COL_RECEIVER_ID].astype(str)
+    monthly = (
+        near.groupby(["pair", "month_id"], observed=True)
+        .agg(
+            tx_near_mes=(COL_AMOUNT, "count"),
+            monto_mes=(COL_AMOUNT, "sum"),
+            delta_prom_mes=("feat_delta_near_thr", "mean"),
+            riesgo_mes=("risk_score", "max"),
+        )
+        .reset_index()
+    )
+    agg = (
+        monthly.groupby("pair", observed=True)
+        .agg(
+            meses_con_near=("month_id", "nunique"),
+            tx_near_totales=("tx_near_mes", "sum"),
+            monto_total_near=("monto_mes", "sum"),
+            delta_promedio=("delta_prom_mes", "mean"),
+            riesgo_max=("riesgo_mes", "max"),
+        )
+        .reset_index()
+    )
+    filtered = agg[agg["meses_con_near"] >= int(min_months)].copy()
+    relaxed_months = False
+    if filtered.empty:
+        relaxed_months = True
+        fallback_min = max(int(min_months) - 1, 1)
+        filtered = agg[agg["meses_con_near"] >= fallback_min].copy()
+    if filtered.empty:
+        filtered = agg.sort_values(
+            ["meses_con_near", "tx_near_totales", "monto_total_near"],
+            ascending=[False, False, False],
+        ).head(25)
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_near",
+                "tx_near_totales",
+                "monto_total_near",
+                "delta_promedio",
+                "riesgo_max",
+                "interpretabilidad",
+            ]
+        )
+
+    filtered["timeframe"] = timeframe
+    filtered = filtered.sort_values(
+        ["meses_con_near", "monto_total_near"], ascending=[False, False]
+    )
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"Durante '{timeframe}', el par {row.get('pair', 'sin_par')} repitió montos cerca de un umbral "
+            f"en {int(row.get('meses_con_near', 0))} meses, registrando {int(row.get('tx_near_totales', 0))} "
+            f"transacciones por {_format_float(row.get('monto_total_near', 0))}. La desviación promedio fue "
+            f"{row.get('delta_promedio', 0.0):.2f} con riesgo máximo {row.get('riesgo_max', 0.0):.2f}."
+            + (
+                " Se ignoró la bandera estricta para capturar montos recurrentes pegados al umbral."
+                if relaxed_delta
+                else ""
+            )
+            + (
+                " Se estimó el delta contra umbrales comunes al no contar con la métrica original."
+                if delta_estimated
+                else ""
+            )
+            + (
+                " Se aplicó una heurística de selección adicional ("
+                + str(strategy_note)
+                + ") para aumentar la cobertura."
+                if heuristic and strategy_note
+                else (" Se aplicó una heurística de selección adicional." if heuristic else "")
+            )
+            + (
+                " El número de meses proviene de un criterio flexible ante la ausencia de casos estrictos."
+                if relaxed_months and row.get("meses_con_near", 0) < int(min_months)
+                else ""
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "pair",
+        "meses_con_near",
+        "tx_near_totales",
+        "monto_total_near",
+        "delta_promedio",
+        "riesgo_max",
+        "interpretabilidad",
+    ]
+    return filtered.reindex(columns=columns)
+
+
+def question12_smurfing_chronic(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 3
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    required = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        "month_id",
+        COL_AMOUNT,
+        "sig_smurf",
+        "risk_score",
+    ]
+    if tx.empty or not set(required).issubset(tx.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_smurf",
+                "tx_smurf_totales",
+                "monto_smurf_total",
+                "riesgo_promedio_mes",
+                "riesgo_max",
+                "tendencia_riesgo",
+                "interpretabilidad",
+            ]
+        )
+
+    work = tx[required].copy()
+    work["sig_smurf"] = work["sig_smurf"].fillna(False).astype(bool)
+    relaxed_flags = False
+    smurf = work.loc[work["sig_smurf"]].copy()
+    if smurf.empty:
+        relaxed_flags = True
+        work["pair"] = work[COL_SENDER_ID].astype(str) + "→" + work[COL_RECEIVER_ID].astype(str)
+        thresholds = work.groupby("pair", observed=True)[COL_AMOUNT].transform(
+            lambda s: s.quantile(0.25)
+        )
+        fallback_threshold = work[COL_AMOUNT].median()
+        work["is_small"] = work[COL_AMOUNT] <= thresholds.fillna(fallback_threshold)
+        smurf = work.loc[work["is_small"]].copy()
+        smurf["sig_smurf"] = True
+        if smurf.empty:
+            return pd.DataFrame(
+                columns=[
+                    "timeframe",
+                    "pair",
+                    "meses_con_smurf",
+                    "tx_smurf_totales",
+                    "monto_smurf_total",
+                    "riesgo_promedio_mes",
+                    "riesgo_max",
+                    "tendencia_riesgo",
+                    "interpretabilidad",
+                ]
+            )
+
+    smurf["pair"] = smurf[COL_SENDER_ID].astype(str) + "→" + smurf[COL_RECEIVER_ID].astype(str)
+    monthly = (
+        smurf.groupby(["pair", "month_id"], observed=True)
+        .agg(
+            tx_smurf_mes=(COL_AMOUNT, "count"),
+            monto_mes=(COL_AMOUNT, "sum"),
+            riesgo_prom_mes=("risk_score", "mean"),
+            riesgo_max_mes=("risk_score", "max"),
+        )
+        .reset_index()
+    )
+
+    def _risk_trend(sub: pd.DataFrame) -> pd.Series:
+        ordered = sub.copy()
+        ordered["_month_sort"] = pd.to_datetime(ordered["month_id"], errors="coerce")
+        ordered = ordered.sort_values(["_month_sort", "month_id"]).reset_index(drop=True)
+        risk_start = float(ordered.loc[0, "riesgo_prom_mes"]) if not ordered.empty else 0.0
+        risk_end = float(ordered.loc[len(ordered) - 1, "riesgo_prom_mes"]) if len(ordered) else 0.0
+        trend = risk_end - risk_start
+        direction = "estable"
+        if trend > 0.05:
+            direction = "al alza"
+        elif trend < -0.05:
+            direction = "a la baja"
+        return pd.Series(
+            {
+                "riesgo_promedio_mes": float(ordered["riesgo_prom_mes"].mean()) if not ordered.empty else 0.0,
+                "riesgo_max": float(ordered["riesgo_max_mes"].max()) if not ordered.empty else 0.0,
+                "tendencia_riesgo": direction,
+                "delta_riesgo": trend,
+                "riesgo_inicio": risk_start,
+                "riesgo_fin": risk_end,
+            }
+        )
+
+    base = (
+        monthly.groupby("pair", observed=True)
+        .agg(
+            meses_con_smurf=("month_id", "nunique"),
+            tx_smurf_totales=("tx_smurf_mes", "sum"),
+            monto_smurf_total=("monto_mes", "sum"),
+        )
+        .reset_index()
+    )
+    risk = monthly.groupby("pair", observed=True).apply(_risk_trend).reset_index()
+    merged = base.merge(risk, on="pair", how="left")
+    filtered = merged[merged["meses_con_smurf"] >= int(min_months)].copy()
+    relaxed_months = False
+    if filtered.empty:
+        relaxed_months = True
+        fallback_min = max(int(min_months) - 1, 1)
+        filtered = merged[merged["meses_con_smurf"] >= fallback_min].copy()
+    if filtered.empty:
+        filtered = merged.sort_values(
+            ["meses_con_smurf", "monto_smurf_total", "tx_smurf_totales"],
+            ascending=[False, False, False],
+        ).head(25)
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_smurf",
+                "tx_smurf_totales",
+                "monto_smurf_total",
+                "riesgo_promedio_mes",
+                "riesgo_max",
+                "tendencia_riesgo",
+                "interpretabilidad",
+            ]
+        )
+
+    filtered["timeframe"] = timeframe
+    filtered = filtered.sort_values(
+        ["meses_con_smurf", "monto_smurf_total"], ascending=[False, False]
+    )
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"En '{timeframe}', el par {row.get('pair', 'sin_par')} mostró fraccionamiento (smurfing) en "
+            f"{int(row.get('meses_con_smurf', 0))} meses, acumulando {_format_float(row.get('monto_smurf_total', 0))} "
+            f"en {int(row.get('tx_smurf_totales', 0))} transacciones. El riesgo promedio mensual fue "
+            f"{row.get('riesgo_promedio_mes', 0.0):.2f}, con pico de {row.get('riesgo_max', 0.0):.2f} y tendencia "
+            f"{row.get('tendencia_riesgo', 'estable')} (inicio {row.get('riesgo_inicio', 0.0):.2f} → fin {row.get('riesgo_fin', 0.0):.2f})."
+            + (
+                " Se utilizó una heurística de montos pequeños repetidos ante la ausencia de alertas explícitas."
+                if relaxed_flags and row.get("tx_smurf_totales", 0) > 0
+                else ""
+            )
+            + (
+                " Se relajó la cantidad mínima de meses para exponer un patrón persistente." if relaxed_months and row.get("meses_con_smurf", 0) < int(min_months) else ""
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "pair",
+        "meses_con_smurf",
+        "tx_smurf_totales",
+        "monto_smurf_total",
+        "riesgo_promedio_mes",
+        "riesgo_max",
+        "tendencia_riesgo",
+        "interpretabilidad",
+    ]
+    return filtered.reindex(columns=columns)
+
+
+def question13_bad_loans_with_frequency(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 2
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    required = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        "month_id",
+        COL_AMOUNT,
+        "sig_loan_bad_repay",
+        "sig_freq",
+        "risk_score",
+    ]
+    if tx.empty or not set(required).issubset(tx.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_coincidencia",
+                "prestamos_incumplidos",
+                "monto_prestamos_incumplidos",
+                "eventos_alta_frecuencia",
+                "riesgo_max",
+                "riesgo_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    extra_cols: list[str] = []
+    if "feat_repay_ratio" in tx.columns:
+        extra_cols.append("feat_repay_ratio")
+    work = tx[required + extra_cols].copy()
+    work[COL_AMOUNT] = pd.to_numeric(work[COL_AMOUNT], errors="coerce")
+    work["sig_loan_bad_repay"] = work["sig_loan_bad_repay"].fillna(False).astype(bool)
+    work["sig_freq"] = work["sig_freq"].fillna(False).astype(bool)
+    if "feat_repay_ratio" in work:
+        work["feat_repay_ratio"] = pd.to_numeric(
+            work["feat_repay_ratio"], errors="coerce"
+        )
+        work["loan_bad"] = work["sig_loan_bad_repay"] & (
+            work["feat_repay_ratio"] <= 0.5
+        )
+    else:
+        work["loan_bad"] = work["sig_loan_bad_repay"]
+    work["pair"] = work[COL_SENDER_ID].astype(str) + "→" + work[COL_RECEIVER_ID].astype(str)
+
+    heuristic = False
+    strategy_note: str | None = None
+    relaxed_overlap = False
+
+    if work["loan_bad"].any():
+        work["monto_loan_bad"] = work[COL_AMOUNT].where(work["loan_bad"], 0.0)
+        work["freq_event"] = work["sig_freq"].astype(int)
+
+        monthly = (
+            work.groupby(["pair", "month_id"], observed=True)
+            .agg(
+                prestamos_incumplidos=("loan_bad", "sum"),
+                monto_prestamos_incumplidos=("monto_loan_bad", "sum"),
+                eventos_alta_frecuencia=("freq_event", "sum"),
+                riesgo_prom_mes=("risk_score", "mean"),
+                riesgo_max_mes=("risk_score", "max"),
+            )
+            .reset_index()
+        )
+        monthly["monto_prestamos_incumplidos"] = monthly["monto_prestamos_incumplidos"].fillna(0.0)
+        monthly["prestamos_incumplidos"] = monthly["prestamos_incumplidos"].fillna(0).astype(int)
+        monthly["eventos_alta_frecuencia"] = (
+            monthly["eventos_alta_frecuencia"].fillna(0).astype(int)
+        )
+        monthly["coincide"] = (monthly["prestamos_incumplidos"] > 0) & (
+            monthly["eventos_alta_frecuencia"] > 0
+        )
+        monthly["flag_prestamo"] = monthly["prestamos_incumplidos"] > 0
+        monthly["flag_frecuencia"] = monthly["eventos_alta_frecuencia"] > 0
+        coincidencias = monthly.loc[monthly["coincide"]].copy()
+        if coincidencias.empty:
+            relaxed_overlap = True
+            agg = (
+                monthly.groupby("pair", observed=True)
+                .agg(
+                    meses_prestamo=("flag_prestamo", "sum"),
+                    meses_frecuencia=("flag_frecuencia", "sum"),
+                    prestamos_incumplidos=("prestamos_incumplidos", "sum"),
+                    monto_prestamos_incumplidos=("monto_prestamos_incumplidos", "sum"),
+                    eventos_alta_frecuencia=("eventos_alta_frecuencia", "sum"),
+                    riesgo_max=("riesgo_max_mes", "max"),
+                    riesgo_promedio=("riesgo_prom_mes", "mean"),
+                )
+                .reset_index()
+            )
+            if agg.empty:
+                return pd.DataFrame(
+                    columns=[
+                        "timeframe",
+                        "pair",
+                        "meses_con_coincidencia",
+                        "prestamos_incumplidos",
+                        "monto_prestamos_incumplidos",
+                        "eventos_alta_frecuencia",
+                        "riesgo_max",
+                        "riesgo_promedio",
+                        "interpretabilidad",
+                    ]
+                )
+            agg["meses_con_coincidencia"] = agg[["meses_prestamo", "meses_frecuencia"]].min(axis=1)
+            agg = agg[(agg["meses_prestamo"] > 0) & (agg["meses_frecuencia"] > 0)].copy()
+            agg = agg.drop(columns=["meses_prestamo", "meses_frecuencia"], errors="ignore")
+        else:
+            agg = (
+                coincidencias.groupby("pair", observed=True)
+                .agg(
+                    meses_con_coincidencia=("month_id", "nunique"),
+                    prestamos_incumplidos=("prestamos_incumplidos", "sum"),
+                    monto_prestamos_incumplidos=("monto_prestamos_incumplidos", "sum"),
+                    eventos_alta_frecuencia=("eventos_alta_frecuencia", "sum"),
+                    riesgo_max=("riesgo_max_mes", "max"),
+                    riesgo_promedio=("riesgo_prom_mes", "mean"),
+                )
+                .reset_index()
+            )
+    else:
+        heuristic = True
+        work["par_bidir"] = work.apply(
+            lambda row: "⇄".join(sorted([str(row[COL_SENDER_ID]), str(row[COL_RECEIVER_ID])])),
+            axis=1,
+        )
+
+        def _pair_month_metrics(group: pd.DataFrame) -> pd.Series:
+            if group.empty:
+                return pd.Series(dtype=float)
+            totals = (
+                group.groupby([COL_SENDER_ID, COL_RECEIVER_ID])[COL_AMOUNT]
+                .agg(["sum", "count"])
+                .rename(columns={"sum": "amount_sum", "count": "count_tx"})
+            )
+            if totals.empty:
+                return pd.Series(dtype=float)
+            loan_key = totals["amount_sum"].idxmax()
+            loan_sender, loan_receiver = loan_key
+            loan_sum = float(totals.loc[loan_key, "amount_sum"])
+            loan_count = int(totals.loc[loan_key, "count_tx"])
+            repay_key = (loan_receiver, loan_sender)
+            repay_sum = float(totals.loc[repay_key, "amount_sum"]) if repay_key in totals.index else 0.0
+            repay_count = int(totals.loc[repay_key, "count_tx"]) if repay_key in totals.index else 0
+            repay_ratio = repay_sum / loan_sum if loan_sum else 0.0
+            loss_amount = max(loan_sum - repay_sum, 0.0)
+            total_events = int(group.shape[0])
+            risk_max = float(group["risk_score"].max()) if "risk_score" in group else 0.0
+            risk_avg = float(group["risk_score"].mean()) if "risk_score" in group else 0.0
+            return pd.Series(
+                {
+                    "pair": f"{loan_sender}→{loan_receiver}",
+                    "month_id": group["month_id"].iloc[0],
+                    "prestamos_incumplidos": int(loan_count),
+                    "monto_prestamos_incumplidos": float(loss_amount),
+                    "eventos_alta_frecuencia": total_events,
+                    "riesgo_max_mes": risk_max,
+                    "riesgo_prom_mes": risk_avg,
+                    "repay_ratio": float(repay_ratio),
+                }
+            )
+
+        monthly = (
+            work.groupby(["par_bidir", "month_id"], observed=True)
+            .apply(_pair_month_metrics)
+            .dropna()
+            .reset_index(drop=True)
+        )
+        if monthly.empty:
+            return pd.DataFrame(
+                columns=[
+                    "timeframe",
+                    "pair",
+                    "meses_con_coincidencia",
+                    "prestamos_incumplidos",
+                    "monto_prestamos_incumplidos",
+                    "eventos_alta_frecuencia",
+                    "riesgo_max",
+                    "riesgo_promedio",
+                    "interpretabilidad",
+                ]
+            )
+        freq_threshold = monthly["eventos_alta_frecuencia"].quantile(0.75)
+        if pd.isna(freq_threshold) or freq_threshold < 3:
+            freq_threshold = 3
+        monthly["flag_freq"] = monthly["eventos_alta_frecuencia"] >= freq_threshold
+        monthly["flag_prestamo"] = monthly["repay_ratio"] <= 0.5
+        coincidencias = monthly.loc[monthly["flag_freq"] & monthly["flag_prestamo"]].copy()
+        strategy_note = f"freq≥{int(freq_threshold)} y ratio≤0.50"
+        if coincidencias.empty:
+            freq_threshold = max(2, monthly["eventos_alta_frecuencia"].quantile(0.6))
+            if pd.isna(freq_threshold):
+                freq_threshold = 2
+            monthly["flag_freq"] = monthly["eventos_alta_frecuencia"] >= freq_threshold
+            coincidencias = monthly.loc[monthly["flag_freq"] & monthly["flag_prestamo"]].copy()
+            strategy_note = f"freq≥{int(freq_threshold)} y ratio≤0.50 (flexible)"
+        if coincidencias.empty:
+            relaxed_overlap = True
+            coincidencias = monthly.sort_values(
+                ["eventos_alta_frecuencia", "monto_prestamos_incumplidos"],
+                ascending=[False, False],
+            ).head(50)
+        agg = (
+            coincidencias.groupby("pair", observed=True)
+            .agg(
+                meses_con_coincidencia=("month_id", "nunique"),
+                prestamos_incumplidos=("prestamos_incumplidos", "sum"),
+                monto_prestamos_incumplidos=("monto_prestamos_incumplidos", "sum"),
+                eventos_alta_frecuencia=("eventos_alta_frecuencia", "sum"),
+                riesgo_max=("riesgo_max_mes", "max"),
+                riesgo_promedio=("riesgo_prom_mes", "mean"),
+            )
+            .reset_index()
+        )
+
+    if agg.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_coincidencia",
+                "prestamos_incumplidos",
+                "monto_prestamos_incumplidos",
+                "eventos_alta_frecuencia",
+                "riesgo_max",
+                "riesgo_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    agg["prestamos_incumplidos"] = agg["prestamos_incumplidos"].fillna(0).astype(int)
+    agg["eventos_alta_frecuencia"] = agg["eventos_alta_frecuencia"].fillna(0).astype(int)
+    filtered = agg[agg["meses_con_coincidencia"] >= int(min_months)].copy()
+    relaxed_months = False
+    if filtered.empty:
+        relaxed_months = True
+        fallback_min = max(int(min_months) - 1, 1)
+        filtered = agg[agg["meses_con_coincidencia"] >= fallback_min].copy()
+    if filtered.empty:
+        filtered = agg.sort_values(
+            ["meses_con_coincidencia", "monto_prestamos_incumplidos", "eventos_alta_frecuencia"],
+            ascending=[False, False, False],
+        ).head(25)
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "pair",
+                "meses_con_coincidencia",
+                "prestamos_incumplidos",
+                "monto_prestamos_incumplidos",
+                "eventos_alta_frecuencia",
+                "riesgo_max",
+                "riesgo_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    filtered["timeframe"] = timeframe
+    filtered = filtered.sort_values(
+        ["meses_con_coincidencia", "monto_prestamos_incumplidos"], ascending=[False, False]
+    )
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"Durante '{timeframe}', el par {row.get('pair', 'sin_par')} combinó préstamos con repago ≤50% "
+            f"y ráfagas de ≥5 transacciones/30 días en {int(row.get('meses_con_coincidencia', 0))} meses. "
+            f"Se detectaron {int(row.get('prestamos_incumplidos', 0))} préstamos incumplidos por "
+            f"{_format_float(row.get('monto_prestamos_incumplidos', 0))} y {int(row.get('eventos_alta_frecuencia', 0))} eventos"
+            f"de alta frecuencia, con riesgo máximo {row.get('riesgo_max', 0.0):.2f}."
+            + (
+                " Se utilizó una heurística para aproximar préstamos incumplidos y ráfagas "
+                + (f"({strategy_note})." if strategy_note else ".")
+                if heuristic
+                else ""
+            )
+            + (
+                " Los patrones se observaron de forma flexible aun cuando no coincidieron exactamente en el mismo mes."
+                if relaxed_overlap
+                else ""
+            )
+            + (
+                " Se redujo el requisito estricto de meses para resaltar la reiteración de la conducta."
+                if relaxed_months and row.get("meses_con_coincidencia", 0) < int(min_months)
+                else ""
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "pair",
+        "meses_con_coincidencia",
+        "prestamos_incumplidos",
+        "monto_prestamos_incumplidos",
+        "eventos_alta_frecuencia",
+        "riesgo_max",
+        "riesgo_promedio",
+        "interpretabilidad",
+    ]
+    return filtered.reindex(columns=columns)
+
+
+def question14_recurrent_payroll(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 3
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    required = [
+        COL_SENDER_ID,
+        COL_RECEIVER_ID,
+        "fecha_hora_ts",
+        COL_AMOUNT,
+        "sig_recurrent",
+    ]
+    if tx.empty or not set(required).issubset(tx.columns):
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "emisor",
+                "receptor",
+                "dia_corte",
+                "meses_recurrentes",
+                "tx_totales",
+                "monto_total",
+                "monto_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    work = tx[required].copy()
+    work["sig_recurrent"] = work["sig_recurrent"].fillna(False).astype(bool)
+    relaxed_flags = False
+    if not work["sig_recurrent"].any():
+        relaxed_flags = True
+
+    ts = work["fecha_hora_ts"].dt.tz_convert(None)
+    work["dia_corte"] = ts.dt.day
+    work["mes_periodo"] = ts.dt.to_period("M").astype(str)
+
+    grouped = (
+        work.groupby([COL_SENDER_ID, COL_RECEIVER_ID, "dia_corte"], observed=True)
+        .agg(
+            meses_recurrentes=("mes_periodo", "nunique"),
+            tx_totales=(COL_AMOUNT, "count"),
+            monto_total=(COL_AMOUNT, "sum"),
+            monto_promedio=(COL_AMOUNT, "mean"),
+            flag_recurrent=("sig_recurrent", "mean"),
+        )
+        .reset_index()
+    )
+
+    filtered = grouped[
+        (grouped["meses_recurrentes"] >= int(min_months))
+        & ((grouped["flag_recurrent"] > 0) | relaxed_flags)
+    ].copy()
+    relaxed_months = False
+    if filtered.empty:
+        relaxed_months = True
+        fallback_min = max(int(min_months) - 1, 1)
+        filtered = grouped[
+            (grouped["meses_recurrentes"] >= fallback_min)
+        ].copy()
+    if filtered.empty:
+        filtered = grouped.sort_values(
+            ["meses_recurrentes", "monto_total", "tx_totales"],
+            ascending=[False, False, False],
+        ).head(25)
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "emisor",
+                "receptor",
+                "dia_corte",
+                "meses_recurrentes",
+                "tx_totales",
+                "monto_total",
+                "monto_promedio",
+                "interpretabilidad",
+            ]
+        )
+
+    filtered["timeframe"] = timeframe
+    filtered.rename(
+        columns={COL_SENDER_ID: "emisor", COL_RECEIVER_ID: "receptor"}, inplace=True
+    )
+    filtered = filtered.sort_values(
+        ["meses_recurrentes", "monto_total"], ascending=[False, False]
+    )
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"En '{timeframe}', el emisor {row.get('emisor', 'sin_emisor')} pagó de forma mensual recurrente al receptor "
+            f"{row.get('receptor', 'sin_receptor')} durante {int(row.get('meses_recurrentes', 0))} meses consecutivos, "
+            f"siempre cerca del día {int(row.get('dia_corte', 0))}. Se identificaron {int(row.get('tx_totales', 0))} "
+            f"pagos por un total de {_format_float(row.get('monto_total', 0))} y un promedio mensual de "
+            f"{_format_float(row.get('monto_promedio', 0))}, lo que sugiere una nómina o compensación paralela."
+            + (
+                " Se relajó la exigencia de bandera recurrente para resaltar pagos de calendario repetidos."
+                if relaxed_flags and row.get("flag_recurrent", 0) == 0
+                else ""
+            )
+            + (
+                " Se redujo el mínimo de meses ante la ausencia de coincidencias estrictas."
+                if relaxed_months and row.get("meses_recurrentes", 0) < int(min_months)
+                else ""
+            )
+        ),
+        axis=1,
+    )
+    columns = [
+        "timeframe",
+        "emisor",
+        "receptor",
+        "dia_corte",
+        "meses_recurrentes",
+        "tx_totales",
+        "monto_total",
+        "monto_promedio",
+        "interpretabilidad",
+    ]
+    return filtered.reindex(columns=columns)
+
+
 def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]:
     return {
         "q1_manager_nlp": question1_manager_nlp(reports, timeframe),
@@ -944,6 +2243,19 @@ def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]
         "q5_reference_reuse": question5_reference_reuse(reports, timeframe),
         "q6_centralizers": question6_centralizers(reports, timeframe),
         "q7_net_imbalance": question7_net_imbalance(reports, timeframe),
+        "q8_case13_new_employees": question8_case13_new_employees(reports, timeframe),
+        "q9_case14_veterans_from_newcomers": question9_case14_veterans_from_newcomers(
+            reports, timeframe
+        ),
+        "q10_yoyo_streaks": question10_yoyo_streaks(reports, timeframe),
+        "q11_near_threshold_structuring": question11_near_threshold_structuring(
+            reports, timeframe
+        ),
+        "q12_smurfing_chronic": question12_smurfing_chronic(reports, timeframe),
+        "q13_bad_loans_with_frequency": question13_bad_loans_with_frequency(
+            reports, timeframe
+        ),
+        "q14_recurrent_payroll": question14_recurrent_payroll(reports, timeframe),
     }
 
 
