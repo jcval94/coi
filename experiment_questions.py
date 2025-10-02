@@ -22,7 +22,12 @@ from coi_fraud.schemas import (
     COL_DESCRIPTION,
     COL_RECEIVER_ID,
     COL_RELATION,
+    COL_SENDER_FULL_NAME,
     COL_SENDER_ID,
+    COL_SENDER_TENURE_YEARS,
+)
+from coi_fraud.aggregate.persons import (
+    CASE14_NEW_EMPLOYEE_YEARS,
 )
 
 
@@ -204,6 +209,81 @@ def _coalesce_text_column(df: pd.DataFrame, column: str) -> pd.Series:
     if column in df:
         return df[column].fillna("").astype(str)
     return pd.Series([""] * len(df), index=df.index)
+
+
+def _collect_sender_lists(
+    reports: Mapping[str, Any],
+    timeframe: str,
+    personas: Iterable[Any],
+    *,
+    max_sender_tenure_years: float | None = None,
+) -> dict[str, list[str]]:
+    """Genera listas de emisores asociados a cada persona receptora."""
+
+    tx = _get_section(reports, "transaccion", timeframe)
+    if tx.empty:
+        return {}
+
+    required = {COL_SENDER_ID, COL_RECEIVER_ID}
+    if not required.issubset(tx.columns):
+        return {}
+
+    columns = [COL_SENDER_ID, COL_RECEIVER_ID]
+    if COL_SENDER_FULL_NAME in tx.columns:
+        columns.append(COL_SENDER_FULL_NAME)
+    if max_sender_tenure_years is not None and COL_SENDER_TENURE_YEARS in tx.columns:
+        columns.append(COL_SENDER_TENURE_YEARS)
+
+    subset = tx[columns].copy()
+    subset = subset.dropna(subset=[COL_RECEIVER_ID, COL_SENDER_ID])
+    if subset.empty:
+        return {}
+
+    persona_values = [value for value in personas if not pd.isna(value)]
+    if not persona_values:
+        return {}
+
+    persona_strings = {str(value) for value in persona_values}
+    subset[COL_RECEIVER_ID] = subset[COL_RECEIVER_ID].astype(str)
+    subset = subset.loc[subset[COL_RECEIVER_ID].isin(persona_strings)].copy()
+    if subset.empty:
+        return {}
+
+    if max_sender_tenure_years is not None and COL_SENDER_TENURE_YEARS in subset.columns:
+        subset[COL_SENDER_TENURE_YEARS] = pd.to_numeric(
+            subset[COL_SENDER_TENURE_YEARS], errors="coerce"
+        )
+        subset = subset.loc[
+            subset[COL_SENDER_TENURE_YEARS].fillna(float("inf")) <= max_sender_tenure_years
+        ].copy()
+        if subset.empty:
+            return {}
+
+    subset[COL_SENDER_ID] = subset[COL_SENDER_ID].astype(str)
+    subset["_sender_repr"] = subset[COL_SENDER_ID]
+    if COL_SENDER_FULL_NAME in subset.columns:
+        names = subset[COL_SENDER_FULL_NAME].fillna("").astype(str).str.strip()
+        with_name = names != ""
+        subset.loc[with_name, "_sender_repr"] = (
+            subset.loc[with_name, COL_SENDER_ID].astype(str)
+            + " ("
+            + names.loc[with_name]
+            + ")"
+        )
+
+    if subset.empty:
+        return {}
+
+    def _unique_sorted(series: pd.Series) -> list[str]:
+        unique_values = pd.unique(series.astype(str))
+        return sorted(unique_values)
+
+    grouped = (
+        subset.groupby(COL_RECEIVER_ID, observed=True)["_sender_repr"]
+        .agg(_unique_sorted)
+        .to_dict()
+    )
+    return grouped
 
 
 def _manager_nlp_hits(
@@ -1224,6 +1304,7 @@ def question8_case13_new_employees(
                 "caso13_persona_emisores_unicos",
                 "caso13_persona_tx_altos",
                 "caso13_persona_monto_promedio",
+                "caso13_persona_emisores_lista",
                 "interpretabilidad",
             ]
         )
@@ -1241,6 +1322,7 @@ def question8_case13_new_employees(
                 "caso13_persona_emisores_unicos",
                 "caso13_persona_tx_altos",
                 "caso13_persona_monto_promedio",
+                "caso13_persona_emisores_lista",
                 "interpretabilidad",
             ]
         )
@@ -1248,6 +1330,12 @@ def question8_case13_new_employees(
     work["timeframe"] = timeframe
     work = work.sort_values(
         ["caso13_persona_tx_altos", "caso13_persona_monto_total"], ascending=[False, False]
+    )
+    persona_series = work.get("persona", pd.Series(dtype="object"))
+    sender_lists = _collect_sender_lists(reports, timeframe, persona_series)
+    work["caso13_persona_emisores_lista"] = persona_series.astype(str).map(sender_lists)
+    work["caso13_persona_emisores_lista"] = work["caso13_persona_emisores_lista"].apply(
+        lambda value: value if isinstance(value, list) else []
     )
     work["interpretabilidad"] = work.apply(
         lambda row: (
@@ -1269,6 +1357,7 @@ def question8_case13_new_employees(
         "caso13_persona_emisores_unicos",
         "caso13_persona_tx_altos",
         "caso13_persona_monto_promedio",
+        "caso13_persona_emisores_lista",
         "interpretabilidad",
     ]
     return work.reindex(columns=columns)
@@ -1320,6 +1409,7 @@ def question9_case14_veterans_from_newcomers(
                 "caso14_persona_monto_de_emisores_nuevos",
                 "caso14_persona_emisores_nuevos_unicos",
                 "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_lista",
                 "interpretabilidad",
             ]
         )
@@ -1440,6 +1530,7 @@ def question9_case14_veterans_from_newcomers(
                 "caso14_persona_monto_de_emisores_nuevos",
                 "caso14_persona_emisores_nuevos_unicos",
                 "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_lista",
                 "interpretabilidad",
             ]
         )
@@ -1449,6 +1540,19 @@ def question9_case14_veterans_from_newcomers(
         ["caso14_persona_tx_de_emisores_nuevos", "caso14_persona_monto_de_emisores_nuevos"],
         ascending=[False, False],
     )
+    persona_series = work.get("persona", pd.Series(dtype="object"))
+    sender_lists = _collect_sender_lists(
+        reports,
+        timeframe,
+        persona_series,
+        max_sender_tenure_years=CASE14_NEW_EMPLOYEE_YEARS,
+    )
+    work["caso14_persona_emisores_nuevos_lista"] = persona_series.astype(str).map(
+        sender_lists
+    )
+    work["caso14_persona_emisores_nuevos_lista"] = work[
+        "caso14_persona_emisores_nuevos_lista"
+    ].apply(lambda value: value if isinstance(value, list) else [])
     work["interpretabilidad"] = work.apply(
         lambda row: (
             f"Dentro de '{timeframe}', la persona {_coalesce_str(row.get('persona'), default='sin_persona')} "
@@ -1480,6 +1584,7 @@ def question9_case14_veterans_from_newcomers(
         "caso14_persona_monto_de_emisores_nuevos",
         "caso14_persona_emisores_nuevos_unicos",
         "caso14_persona_monto_promedio_de_emisores_nuevos",
+        "caso14_persona_emisores_nuevos_lista",
         "interpretabilidad",
     ]
     return work.reindex(columns=columns)
