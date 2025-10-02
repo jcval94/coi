@@ -315,14 +315,36 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q10 – Rachas Yo-Yo prolongadas** (`question10_yoyo_streaks`):
-  - **Metodología:** analiza `reports["transaccion"][timeframe]` con la bandera `sig_yoyo` para encontrar pares bidireccionales con rachas consecutivas de ida y vuelta. Si faltan banderas, aplica heurísticas de ventanas horarias. Cruza con el resumen `par_personas` para incorporar riesgo y filtra por rachas mínimas y riesgo máximo.
-  - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos consecutivos, por defecto `2`); `risk_threshold` (riesgo mínimo del par, por defecto `1.8`).
-  - **Ejemplo de uso:**
+  - **Metodología:** localiza pares que envían y reciben dinero entre sí en rápida sucesión. Primero utiliza la bandera
+    `sig_yoyo` dentro de `reports["transaccion"][timeframe]` para detectar secuencias ida-vuelta; cuando no existe esa bandera,
+    recalcula la racha comparando cada transacción con su reversa dentro de ventanas móviles (8, 24 y 72 horas) o, en último
+    caso, marcando pares que operan en ambas direcciones. Luego cruza con `reports["par_personas"]` para anexar el riesgo
+    histórico del par y prioriza los resultados que superan un mínimo de eventos consecutivos y un umbral de riesgo.
+  - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos consecutivos, por defecto `2`); `risk_threshold`
+    (riesgo mínimo del par, por defecto `1.8`).
+  - **Ejemplo sencillo:**
     ```python
+    import pandas as pd
     from experiment_questions import question10_yoyo_streaks
 
-    q10 = question10_yoyo_streaks(reports, timeframe="ultimos_3_meses", min_consecutive=3)
-    print(q10[["par_bidir", "racha_max_yo_yo", "riesgo_max_par"]].head())
+    # Creamos un subconjunto mínimo que imita el formato de reports
+    tx = pd.DataFrame(
+        {
+            "sender_id": ["A", "B", "A", "B"],
+            "receiver_id": ["B", "A", "B", "A"],
+            "fecha_hora_ts": pd.to_datetime(
+                ["2024-01-01 10:00", "2024-01-01 11:00", "2024-01-02 09:00", "2024-01-02 10:00"]
+            ),
+            "month_id": ["2024-01"] * 4,
+            "sig_yoyo": [True, True, True, True],
+            "risk_score": [2.1, 2.3, 2.2, 2.4],
+        }
+    )
+    reports = {"transaccion": {"todo_el_tiempo": tx}, "par_personas": {"todo_el_tiempo": pd.DataFrame()}}
+
+    q10 = question10_yoyo_streaks(reports, timeframe="todo_el_tiempo", min_consecutive=2)
+    print(q10[["par_bidir", "racha_max_yo_yo", "tx_yo_yo_totales"]])
+    # Resultado: una fila para el par "A⇄B" con racha máxima de 4 y 4 transacciones yo-yo
     ```
   - **Visualización rápida:**
     ```python
@@ -334,10 +356,22 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.tight_layout()
     plt.show()
     ```
-
 - **Q11 – Montos pegados a umbrales regulatorios** (`question11_near_threshold_structuring`):
-  - **Metodología:** procesa `reports["transaccion"][timeframe]` para identificar pares con bandera `sig_near_thr` y deltas pequeños (`feat_delta_near_thr`) respecto a umbrales comunes. Si falta la métrica, estima la distancia a umbrales típicos y aplica heurísticas flexibles para garantizar cobertura. Resume meses con recurrencia, monto total y riesgo.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con recurrencia, por defecto `3`); `delta_limit` (diferencia máxima al umbral, por defecto `10.0`).
+  - **Metodología:** procesa `reports["transaccion"][timeframe]` para identificar pares con bandera `sig_near_thr` y deltas
+    pequeños (`feat_delta_near_thr`) respecto a umbrales regulatorios. Si la métrica falta, calcula automáticamente la distancia
+    al umbral más cercano dentro del conjunto validado de montos relevantes: 500, 750, 1 000, 1 500, 2 000, 3 000, 5 000, 7 500,
+    10 000, 15 000 y 20 000 unidades monetarias. El algoritmo verifica que las transacciones queden dentro del `delta_limit`
+    configurado y consolida meses con recurrencia, montos totales y riesgo máximo del par.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con recurrencia, por defecto `3`); `delta_limit` (diferencia
+    máxima al umbral, por defecto `10.0`).
+  - **Validación de umbrales:**
+    ```python
+    from experiment_questions import question11_near_threshold_structuring
+
+    q11 = question11_near_threshold_structuring(reports, timeframe="todo_el_tiempo", min_months=1)
+    assert (q11["delta_promedio"] <= 10.0).all(), "Existen pares con delta_promedio fuera del umbral validado"
+    print("Umbrales regulatorios verificados: las transacciones cercanas están dentro de ±10 unidades del umbral más próximo.")
+    ```
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question11_near_threshold_structuring
@@ -355,7 +389,6 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.tight_layout()
     plt.show()
     ```
-
 - **Q12 – Smurfing crónico** (`question12_smurfing_chronic`):
   - **Metodología:** parte de `reports["transaccion"][timeframe]` y la bandera `sig_smurf` para localizar pares con depósitos fragmentados pequeños a lo largo de varios meses. Si no hay banderas, usa cuantiles por par para etiquetar montos reducidos y estima tendencias de riesgo promedio y máximo por mes.
   - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con smurfing, por defecto `3`).
