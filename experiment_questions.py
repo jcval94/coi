@@ -447,8 +447,9 @@ def question1_manager_nlp(
        subordinado según las categorías proporcionadas y sus sinónimos.
     3. Normaliza identificadores de manager y subordinado y descarta registros
        incompletos.
-    4. Agrega conteos y montos por mes, categoría y par jerárquico para
-       construir la explicación en lenguaje natural.
+    4. Agrega conteos y montos por mes, categoría y par jerárquico, conservando
+       los conceptos crudos y las descripciones de origen para construir la
+       explicación en lenguaje natural.
 
     Returns
     -------
@@ -468,6 +469,7 @@ def question1_manager_nlp(
                 "nlp_concepto_crudo",
                 "tx_count",
                 "monto_total",
+                "nlp_descripciones",
                 "interpretabilidad",
             ]
         )
@@ -493,6 +495,7 @@ def question1_manager_nlp(
                 "nlp_concepto_crudo",
                 "tx_count",
                 "monto_total",
+                "nlp_descripciones",
                 "interpretabilidad",
             ]
         )
@@ -519,10 +522,29 @@ def question1_manager_nlp(
                 "manager_user_id",
                 "subordinado_user_id",
                 "nlp_concepto_sospechoso",
+                "nlp_concepto_crudo",
+                "nlp_descripciones",
                 "tx_count",
                 "monto_total",
                 "interpretabilidad",
             ]
+        )
+
+    aggregations: dict[str, tuple[str, Any]] = {
+        "tx_count": (COL_AMOUNT, "count"),
+        "monto_total": (COL_AMOUNT, "sum"),
+        "nlp_concepto_crudo": ("nlp_concepto_crudo", _combine_unique_texts),
+    }
+    if COL_DESCRIPTION in hits.columns:
+        aggregations["nlp_descripciones"] = (
+            COL_DESCRIPTION,
+            _combine_unique_texts,
+        )
+    else:
+        hits["nlp_descripciones"] = ""
+        aggregations["nlp_descripciones"] = (
+            "nlp_descripciones",
+            _combine_unique_texts,
         )
 
     agg = (
@@ -535,17 +557,15 @@ def question1_manager_nlp(
             ],
             observed=True,
         )
-        .agg(
-            tx_count=(COL_AMOUNT, "count"),
-            monto_total=(COL_AMOUNT, "sum"),
-            nlp_concepto_crudo=("nlp_concepto_crudo", _combine_unique_texts),
-        )
+        .agg(**aggregations)
         .reset_index()
     )
     agg = agg.sort_values(["tx_count", "monto_total"], ascending=[False, False])
     agg["timeframe"] = timeframe
     agg = agg.rename(columns={"matched_category": "nlp_concepto_sospechoso"})
     agg["nlp_concepto_crudo"] = agg["nlp_concepto_crudo"].fillna("")
+    if "nlp_descripciones" in agg:
+        agg["nlp_descripciones"] = agg["nlp_descripciones"].fillna("")
     if direction == "manager_a_subordinado":
         def _build_message(row: pd.Series) -> str:
             return (
@@ -558,6 +578,11 @@ def question1_manager_nlp(
                 + (
                     f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
                     if str(row.get('nlp_concepto_crudo', '')).strip()
+                    else ""
+                )
+                + (
+                    f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
+                    if str(row.get('nlp_descripciones', '')).strip()
                     else ""
                 )
             )
@@ -575,6 +600,11 @@ def question1_manager_nlp(
                     if str(row.get('nlp_concepto_crudo', '')).strip()
                     else ""
                 )
+                + (
+                    f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
+                    if str(row.get('nlp_descripciones', '')).strip()
+                    else ""
+                )
             )
 
     agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
@@ -585,6 +615,7 @@ def question1_manager_nlp(
         "subordinado_user_id",
         "nlp_concepto_sospechoso",
         "nlp_concepto_crudo",
+        "nlp_descripciones",
         "tx_count",
         "monto_total",
         "interpretabilidad",
