@@ -4,31 +4,70 @@
 - Instalar dependencias con `pip install -r requirements.txt` (incluye pandas, numpy, seaborn, scikit-learn y scipy; estas dos últimas son opcionales si no se entrenan embeddings)
 
 ## Instalación en Google Colab
-1. Conéctate a un cuaderno nuevo y asegúrate de estar usando un entorno con Python 3.10+.
-2. Descarga el paquete (por ejemplo, clonando el repositorio o subiendo el archivo `.zip` generado por GitHub/tu release) y descomprímelo dentro de `/content`. Un flujo típico sería:
+1. Abre un cuaderno nuevo en [Google Colab](https://colab.research.google.com/), ve a **Entorno de ejecución → Cambiar tipo de entorno de ejecución** y confirma que usas Python ≥3.10.
+2. Descarga el código directamente desde GitHub en la carpeta de trabajo de Colab (`/content`). El siguiente bloque es reproducible cada vez que necesites partir de cero:
    ```python
-   !git clone https://github.com/tu-org/coi.git /content/coi
+   %cd /content
+   !rm -rf coi  # elimina una copia previa si la hubiera
+   !git clone --depth 1 --branch main https://github.com/tu-org/coi.git coi
    %cd /content/coi
    ```
-   Si prefieres trabajar con un archivo `.zip`, basta con subirlo a Colab (o montarlo desde Drive) y ejecutar:
-   ```python
-   from zipfile import ZipFile
-
-   with ZipFile("/content/coi_fraud_mensual_viz_qa.zip", "r") as z:
-       z.extractall("/content")
-   ```
-3. Instala las dependencias mínimas:
+   > Si tienes el paquete comprimido (`.zip`), súbelo a `/content` y descomprímelo con:
+   > ```python
+   > from zipfile import ZipFile
+   >
+   > with ZipFile("/content/coi_fraud_mensual_viz_qa.zip", "r") as z:
+   >     z.extractall("/content")
+   > %cd /content/coi
+   > ```
+3. Instala las dependencias necesarias (puedes ejecutar el comando todas las veces que abras el cuaderno; pip omitirá lo que ya exista):
    ```python
    %pip install -q pandas numpy seaborn scikit-learn scipy
    ```
-4. Añade el paquete al `sys.path` si no usas instalación editable. Suponiendo que el módulo vive en `/content/coi_fraud`:
+4. Añade el repositorio al `sys.path` para que Python ubique el paquete incluso si solo lo clonaste:
    ```python
    import sys
-   sys.path.append("/content")  # o "/content/coi" si clonaste el repositorio
+   sys.path.append("/content")  # para importar coi_fraud desde /content/coi
    ```
-5. Verifica la importación con `import coi_fraud`.
+5. Valida que todo esté disponible:
+   ```python
+   import coi_fraud
+   from coi_fraud import run_pipeline
+   ```
 
-> 💡 Consejo: si montas Google Drive (`from google.colab import drive; drive.mount("/content/drive")`), puedes almacenar datasets voluminosos y leerlos directamente con `pd.read_csv("/content/drive/.../archivo.csv")`.
+> 💡 Consejo: si montas Google Drive (`from google.colab import drive; drive.mount("/content/drive")`), puedes almacenar datasets voluminosos y leerlos directamente con `pd.read_csv("/content/drive/.../archivo.csv")` sin ocupar el almacenamiento temporal de Colab.
+
+### Flujo automatizado con `colab_usage`
+Para evitar repetir pasos manuales, el repositorio incluye el módulo `colab_usage.py` pensado exclusivamente para notebooks de Colab. Usa `run_full_colab_flow` para clonar el repositorio, instalar dependencias, ejecutar el pipeline sobre tu CSV y exportar automáticamente todas las casuísticas.
+
+```python
+from colab_usage import run_full_colab_flow
+
+salidas = run_full_colab_flow(
+    csv_input_path="/content/mis_transacciones.csv",  # tu archivo con columnas mínimas
+    repo_url="https://github.com/tu-org/coi.git",
+    branch="main",
+    target_dir="/content/coi",
+    output_dir="/content/coi_casuisticas",
+    include_empty=False,  # cambia a True si quieres CSV incluso sin hallazgos
+)
+
+salidas  # muestra las rutas generadas por casuística y periodo
+```
+
+Si prefieres controlar cada paso, puedes importar helpers individuales:
+
+```python
+from colab_usage import (
+    setup_environment,
+    run_pipeline_from_csv,
+    export_casuistica_to_csv,
+)
+
+repo_path = setup_environment(force_refresh=False)
+reports = run_pipeline_from_csv("/content/mis_transacciones.csv", repo_dir=repo_path)
+export_casuistica_to_csv(reports, "/content/coi_casuisticas")
+```
 
 ## Ejemplos de uso
 ### 1. Pipeline completo con pandas
@@ -94,12 +133,9 @@ for categoria, timeframes in reports.items():
 ```
 
 ## Uso rápido (Colab)
+Una vez clonada la repo, basta con cargar tu CSV y ejecutar el pipeline:
+
 ```python
-!pip -q install pandas numpy seaborn scikit-learn scipy
-from zipfile import ZipFile
-with ZipFile("/content/coi_fraud_mensual_viz_qa.zip", "r") as z:
-    z.extractall("/content")
-import sys; sys.path.append("/content")
 import pandas as pd
 from coi_fraud import run_pipeline
 from coi_fraud.viz import plots
@@ -108,8 +144,13 @@ from coi_fraud.analysis import qa
 df = pd.read_csv("/content/mis_transacciones.csv")  # columnas mínimas: user_id, receptor-user_id, load_date, movement_amount, transaction_desc
 reports = run_pipeline(df)
 
-# gráficos
+# Exporta todas las casuísticas de manera explícita
+from colab_usage import export_casuistica_to_csv
+export_casuistica_to_csv(reports, "/content/coi_casuisticas")
+
+# gráficos y consultas
 plots.plot_person_imbalance_bar(reports)
+qa.desbalance_personas(reports).head()
 ```
 
 ### 5. Generar un dataset de prueba diverso
