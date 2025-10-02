@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+import inspect
 import re
-from typing import Any, Dict, Iterable, Mapping
+from pathlib import Path
+from textwrap import fill
+from typing import Any, Callable, Dict, Iterable, Mapping
 
 try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import pandas as pd
@@ -35,6 +37,27 @@ NLP_CATEGORY_SYNONYMS = {
     "FAVORES SEXUALES": ("SEXUAL", "SEX", "ACOSO"),
 }
 CONCEPT_SPLIT_PATTERN = re.compile(r"[\s,;|/]+")
+
+
+QUESTION_TITLES: Dict[str, str] = {
+    "q1_manager_nlp": "Q1 – Manager con conceptos NLP sospechosos",
+    "q2_manager_concepts": "Q2 – Conceptos NLP con mayor severidad",
+    "q3_quid_pairs": "Q3 – Pares con rasgos Quid Pro Quo",
+    "q4_quid_negative_value_vs_load": "Q4 – Autorizaciones con valor negativo vs. carga",
+    "q5_reference_reuse": "Q5 – Reutilización de referencias de pago",
+    "q6_centralizers": "Q6 – Receptores centralizadores",
+    "q7_net_imbalance": "Q7 – Personas con desbalance neto",
+    "q8_case13_new_employees": "Q8 – Receptores nuevos con montos altos",
+    "q9_case14_veterans_from_newcomers": "Q9 – Veteranos que reciben de emisores nuevos",
+    "q10_yoyo_streaks": "Q10 – Rachas Yo-Yo prolongadas",
+    "q11_near_threshold_structuring": "Q11 – Montos pegados a umbrales regulatorios",
+    "q12_smurfing_chronic": "Q12 – Smurfing crónico",
+    "q13_bad_loans_with_frequency": "Q13 – Préstamos incumplidos con ráfagas de frecuencia",
+    "q14_recurrent_payroll": "Q14 – Pagos recurrentes tipo nómina",
+    "q15_coordinated_cluster_signals": "Q15 – Clusters con señales coordinadas",
+    "q16_multisignal_transactions": "Q16 – Transacciones con múltiples señales simultáneas",
+    "q17_nlp_person_profiles": "Q17 – Perfiles NLP sospechosos por persona",
+}
 
 
 def _format_float(value: Any) -> str:
@@ -3153,38 +3176,79 @@ def question17_nlp_person_profiles(
     return personas.reindex(columns=columns)
 
 
-def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]:
-    return {
-        "q1_manager_nlp": question1_manager_nlp(reports, timeframe),
-        "q2_manager_concepts": question2_manager_concepts(reports, timeframe),
-        "q3_quid_pairs": question3_quid_pairs(reports, timeframe),
-        "q4_quid_negative_value_vs_load": question4_quid_negative_value_vs_load(reports, timeframe),
-        "q5_reference_reuse": question5_reference_reuse(reports, timeframe),
-        "q6_centralizers": question6_centralizers(reports, timeframe),
-        "q7_net_imbalance": question7_net_imbalance(reports, timeframe),
-        "q8_case13_new_employees": question8_case13_new_employees(reports, timeframe),
-        "q9_case14_veterans_from_newcomers": question9_case14_veterans_from_newcomers(
-            reports, timeframe
-        ),
-        "q10_yoyo_streaks": question10_yoyo_streaks(reports, timeframe),
-        "q11_near_threshold_structuring": question11_near_threshold_structuring(
-            reports, timeframe
-        ),
-        "q12_smurfing_chronic": question12_smurfing_chronic(reports, timeframe),
-        "q13_bad_loans_with_frequency": question13_bad_loans_with_frequency(
-            reports, timeframe
-        ),
-        "q14_recurrent_payroll": question14_recurrent_payroll(reports, timeframe),
-        "q15_coordinated_cluster_signals": question15_coordinated_cluster_signals(
-            reports, timeframe
-        ),
-        "q16_multisignal_transactions": question16_multisignal_transactions(
-            reports, timeframe
-        ),
-        "q17_nlp_person_profiles": question17_nlp_person_profiles(
-            reports, timeframe
-        ),
+QUESTION_FUNCTIONS: Dict[str, Callable[..., pd.DataFrame]] = {
+    "q1_manager_nlp": question1_manager_nlp,
+    "q2_manager_concepts": question2_manager_concepts,
+    "q3_quid_pairs": question3_quid_pairs,
+    "q4_quid_negative_value_vs_load": question4_quid_negative_value_vs_load,
+    "q5_reference_reuse": question5_reference_reuse,
+    "q6_centralizers": question6_centralizers,
+    "q7_net_imbalance": question7_net_imbalance,
+    "q8_case13_new_employees": question8_case13_new_employees,
+    "q9_case14_veterans_from_newcomers": question9_case14_veterans_from_newcomers,
+    "q10_yoyo_streaks": question10_yoyo_streaks,
+    "q11_near_threshold_structuring": question11_near_threshold_structuring,
+    "q12_smurfing_chronic": question12_smurfing_chronic,
+    "q13_bad_loans_with_frequency": question13_bad_loans_with_frequency,
+    "q14_recurrent_payroll": question14_recurrent_payroll,
+    "q15_coordinated_cluster_signals": question15_coordinated_cluster_signals,
+    "q16_multisignal_transactions": question16_multisignal_transactions,
+    "q17_nlp_person_profiles": question17_nlp_person_profiles,
+}
+
+
+QUESTION_METADATA: Dict[str, Dict[str, Any]] = {}
+for key, func in QUESTION_FUNCTIONS.items():
+    doc = inspect.getdoc(func) or ""
+    description = doc.splitlines()[0].strip() if doc else ""
+    match = re.match(r"q(\d+)", key)
+    order = int(match.group(1)) if match else 0
+    QUESTION_METADATA[key] = {
+        "title": QUESTION_TITLES.get(key, key),
+        "description": description,
+        "order": order,
+        "function_name": func.__name__,
+        "interpretability_column": "interpretabilidad",
     }
+
+
+def run_all_questions(
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+) -> Dict[str, pd.DataFrame]:
+    """Ejecuta todas las preguntas estándar con la configuración por defecto."""
+
+    results: Dict[str, pd.DataFrame] = {}
+    for key, func in QUESTION_FUNCTIONS.items():
+        results[key] = func(reports, timeframe=timeframe)
+    return results
+
+
+def get_question_overview() -> pd.DataFrame:
+    """Devuelve un resumen tabular con títulos y descripciones de las preguntas."""
+
+    rows: list[dict[str, Any]] = []
+    for key, meta in QUESTION_METADATA.items():
+        rows.append(
+            {
+                "question_id": key,
+                "orden": meta.get("order", 0),
+                "titulo": meta.get("title", key),
+                "descripcion": meta.get("description", ""),
+                "funcion": meta.get("function_name", ""),
+                "columna_interpretabilidad": meta.get(
+                    "interpretability_column", "interpretabilidad"
+                ),
+            }
+        )
+    overview = pd.DataFrame(rows)
+    if overview.empty:
+        return overview
+    return overview.sort_values("orden").reset_index(drop=True)
+
+
+def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]:
+    return run_all_questions(reports, timeframe=timeframe)
 
 
 def _export_results(results: Mapping[str, Any], output_dir: Path) -> None:
@@ -3198,13 +3262,58 @@ def _export_results(results: Mapping[str, Any], output_dir: Path) -> None:
             )
 
 
-def _print_summary(results: Mapping[str, Any]) -> None:
+def _print_summary(
+    results: Mapping[str, Any],
+    *,
+    max_rows: int = 3,
+) -> None:
+    """Muestra un resumen textual con descripciones e interpretabilidad."""
+
     for key, value in results.items():
-        print(f"\n== {key} ==")
-        if isinstance(value, pd.DataFrame):
-            print(value.head())
-        else:
+        meta = QUESTION_METADATA.get(key, {})
+        title = meta.get("title", key)
+        description = meta.get("description")
+        interpret_col = meta.get("interpretability_column", "interpretabilidad")
+
+        print(f"\n== {title} ({key}) ==")
+        if description:
+            print(fill(description, width=100))
+
+        if not isinstance(value, pd.DataFrame):
             print(value)
+            continue
+
+        total_rows = int(len(value))
+        if total_rows == 0:
+            print("No hay resultados para esta pregunta en el periodo analizado.")
+            continue
+
+        preview = value.drop(columns=[interpret_col], errors="ignore")
+        if preview.empty:
+            preview = value.copy()
+
+        with pd.option_context("display.max_columns", None, "display.width", 120):
+            print(f"Filas disponibles: {total_rows}")
+            print("Resumen tabular (primeras filas):")
+            print(preview.head(max_rows))
+
+        if interpret_col in value.columns:
+            interpret_values = (
+                value[interpret_col]
+                .dropna()
+                .astype(str)
+                .head(meta.get("interpretability_max_rows", max_rows))
+            )
+            if not interpret_values.empty:
+                print("Interpretabilidad destacada:")
+                for text in interpret_values:
+                    wrapped = fill(
+                        text,
+                        width=100,
+                        initial_indent=" • ",
+                        subsequent_indent="   ",
+                    )
+                    print(wrapped)
 
 
 def main() -> None:

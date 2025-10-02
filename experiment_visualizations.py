@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from textwrap import fill
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -11,6 +12,7 @@ from matplotlib.axes import Axes
 from coi_fraud.schemas import COL_RECEIVER_ID, COL_SENDER_ID
 from experiment_questions import (
     DEFAULT_TIMEFRAME,
+    QUESTION_METADATA,
     question1_manager_nlp,
     question2_manager_concepts,
     question3_quid_pairs,
@@ -34,6 +36,13 @@ from experiment_questions import (
 sns.set_theme(style="whitegrid")
 
 
+TIMEFRAME_LABELS = {
+    "ultimo_mes": "Último mes",
+    "ultimos_3_meses": "Últimos 3 meses",
+    DEFAULT_TIMEFRAME: "Todo el tiempo",
+}
+
+
 def _ensure_axis(ax: Optional[Axes] = None, figsize: tuple[int, int] = (8, 5)) -> Axes:
     if ax is not None:
         return ax
@@ -41,9 +50,34 @@ def _ensure_axis(ax: Optional[Axes] = None, figsize: tuple[int, int] = (8, 5)) -
     return created_ax
 
 
-def _empty_chart(ax: Axes, title: str, message: str) -> Axes:
-    ax.set_title(title)
-    ax.text(0.5, 0.5, message, ha="center", va="center", transform=ax.transAxes)
+def _format_timeframe_label(timeframe: str) -> str:
+    return TIMEFRAME_LABELS.get(timeframe, timeframe.replace("_", " ").capitalize())
+
+
+def _apply_plot_metadata(ax: Axes, question_key: str, timeframe: str) -> None:
+    meta = QUESTION_METADATA.get(question_key, {})
+    title = meta.get("title", question_key)
+    timeframe_label = _format_timeframe_label(timeframe)
+    description = meta.get("description")
+    if description:
+        subtitle = fill(description, width=90)
+        ax.set_title(f"{title} · {timeframe_label}\n{subtitle}", loc="left", fontsize=12)
+    else:
+        ax.set_title(f"{title} · {timeframe_label}", loc="left", fontsize=12)
+
+
+def _render_empty_chart(ax: Axes, question_key: str, timeframe: str, message: str) -> Axes:
+    _apply_plot_metadata(ax, question_key, timeframe)
+    ax.text(
+        0.5,
+        0.5,
+        fill(message, width=80),
+        ha="center",
+        va="center",
+        transform=ax.transAxes,
+        fontsize=10,
+        color="#555555",
+    )
     ax.set_axis_off()
     return ax
 
@@ -59,9 +93,10 @@ def plot_q1_manager_nlp(
     data = question1_manager_nlp(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q1 – Conceptos sospechosos",
+            "q1_manager_nlp",
+            timeframe,
             "Sin coincidencias manager-subordinado para el periodo seleccionado.",
         )
 
@@ -74,7 +109,7 @@ def plot_q1_manager_nlp(
     work = work.sort_values(["tx_count", "monto_total"], ascending=[False, False]).head(top_n)
 
     sns.barplot(data=work, x="tx_count", y="pair", hue="nlp_concepto_sospechoso", ax=axis)
-    axis.set_title(f"Q1 – Pares con conceptos sospechosos ({timeframe})")
+    _apply_plot_metadata(axis, "q1_manager_nlp", timeframe)
     axis.set_xlabel("Número de transacciones")
     axis.set_ylabel("Manager → Subordinado")
     axis.legend(title="Concepto")
@@ -92,9 +127,10 @@ def plot_q2_manager_concepts(
     data = question2_manager_concepts(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q2 – Severidad NLP",
+            "q2_manager_concepts",
+            timeframe,
             "Sin conceptos con severidad calculada para el periodo.",
         )
 
@@ -111,7 +147,7 @@ def plot_q2_manager_concepts(
     sns.barplot(**plot_kwargs)
     if axis.get_legend() is not None:
         axis.legend(title="Mes")
-    axis.set_title(f"Q2 – Severidad por concepto ({timeframe})")
+    _apply_plot_metadata(axis, "q2_manager_concepts", timeframe)
     axis.set_xlabel("P95 de risk_score")
     axis.set_ylabel("Concepto NLP")
     return axis
@@ -128,9 +164,10 @@ def plot_q3_quid_pairs(
     data = question3_quid_pairs(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q3 – Pares Quid Pro Quo",
+            "q3_quid_pairs",
+            timeframe,
             "Sin pares destacados para el periodo.",
         )
 
@@ -138,9 +175,10 @@ def plot_q3_quid_pairs(
     if "nivel_respuesta" in work.columns:
         work = work.loc[work["nivel_respuesta"] == "par"].copy()
     if work.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q3 – Pares Quid Pro Quo",
+            "q3_quid_pairs",
+            timeframe,
             "Solo se encontraron detalles de transacción, no pares agregados.",
         )
 
@@ -151,7 +189,7 @@ def plot_q3_quid_pairs(
     )
     work = work.sort_values(["quid_score_max", "quid_tx_count"], ascending=[False, False]).head(top_n)
     sns.barplot(data=work, x="quid_score_max", y="label", hue="quid_tx_count", ax=axis)
-    axis.set_title(f"Q3 – Pares con mayor puntaje ({timeframe})")
+    _apply_plot_metadata(axis, "q3_quid_pairs", timeframe)
     axis.set_xlabel("Puntaje máximo quid-pro-quo")
     axis.set_ylabel("Par emisor → receptor")
     axis.legend(title="Transacciones")
@@ -169,9 +207,10 @@ def plot_q4_negative_value_vs_load(
     data = question4_quid_negative_value_vs_load(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q4 – Autorización vs. carga",
+            "q4_quid_negative_value_vs_load",
+            timeframe,
             "Sin transacciones con desfase negativo registradas.",
         )
 
@@ -193,7 +232,7 @@ def plot_q4_negative_value_vs_load(
     sns.barplot(**plot_kwargs)
     if axis.get_legend() is not None:
         axis.legend(title="Puntaje")
-    axis.set_title(f"Q4 – Desfase autorización/carga ({timeframe})")
+    _apply_plot_metadata(axis, "q4_quid_negative_value_vs_load", timeframe)
     axis.set_xlabel("Días (negativos = autorización previa)")
     axis.set_ylabel("Par emisor → receptor")
     return axis
@@ -210,9 +249,10 @@ def plot_q5_reference_reuse(
     data = question5_reference_reuse(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q5 – Reutilización de referencias",
+            "q5_reference_reuse",
+            timeframe,
             "Sin referencias recurrentes detectadas.",
         )
 
@@ -220,9 +260,10 @@ def plot_q5_reference_reuse(
     if "nivel_respuesta" in work.columns:
         work = work.loc[work["nivel_respuesta"] == "referencia"].copy()
     if work.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q5 – Reutilización de referencias",
+            "q5_reference_reuse",
+            timeframe,
             "Solo hay detalle de transacciones sin resumen por referencia.",
         )
 
@@ -230,7 +271,7 @@ def plot_q5_reference_reuse(
     if "reference_norm" in work:
         work["reference_norm"] = work["reference_norm"].fillna("sin_referencia").astype(str)
     sns.barplot(data=work, x="tx_count", y="reference_norm", hue="n_pairs", ax=axis)
-    axis.set_title(f"Q5 – Referencias más reutilizadas ({timeframe})")
+    _apply_plot_metadata(axis, "q5_reference_reuse", timeframe)
     axis.set_xlabel("Número de transacciones")
     axis.set_ylabel("Referencia normalizada")
     axis.legend(title="Pares distintos")
@@ -248,9 +289,10 @@ def plot_q6_centralizers(
     data = question6_centralizers(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q6 – Receptores centralizadores",
+            "q6_centralizers",
+            timeframe,
             "Sin receptores centralizadores para el periodo.",
         )
 
@@ -268,7 +310,7 @@ def plot_q6_centralizers(
     sns.barplot(**plot_kwargs)
     if axis.get_legend() is not None:
         axis.legend(title="Mes")
-    axis.set_title(f"Q6 – Receptores centralizadores ({timeframe})")
+    _apply_plot_metadata(axis, "q6_centralizers", timeframe)
     axis.set_xlabel("Centralidad (inflow × emisores únicos)")
     axis.set_ylabel("Receptor")
     return axis
@@ -285,9 +327,10 @@ def plot_q7_net_imbalance(
     data = question7_net_imbalance(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q7 – Desbalance neto",
+            "q7_net_imbalance",
+            timeframe,
             "Sin personas con desbalance calculado.",
         )
 
@@ -296,7 +339,7 @@ def plot_q7_net_imbalance(
     work["abs_neto"] = work["desbalance_persona_monto_neto"].abs()
     work = work.sort_values("abs_neto", ascending=False).head(top_n)
     sns.barplot(data=work, x="desbalance_persona_monto_neto", y="persona", ax=axis)
-    axis.set_title(f"Q7 – Personas con desbalance neto ({timeframe})")
+    _apply_plot_metadata(axis, "q7_net_imbalance", timeframe)
     axis.set_xlabel("Monto neto (positivo = recibe más)")
     axis.set_ylabel("Persona")
     return axis
@@ -313,9 +356,10 @@ def plot_q8_case13_new_employees(
     data = question8_case13_new_employees(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q8 – Receptores nuevos",
+            "q8_case13_new_employees",
+            timeframe,
             "Sin receptores recientes con montos altos.",
         )
 
@@ -332,7 +376,7 @@ def plot_q8_case13_new_employees(
         hue="caso13_persona_tx_altos",
         ax=axis,
     )
-    axis.set_title(f"Q8 – Receptores nuevos con montos altos ({timeframe})")
+    _apply_plot_metadata(axis, "q8_case13_new_employees", timeframe)
     axis.set_xlabel("Monto total recibido")
     axis.set_ylabel("Receptor")
     axis.legend(title="Tx monto alto")
@@ -350,9 +394,10 @@ def plot_q9_case14_veterans_from_newcomers(
     data = question9_case14_veterans_from_newcomers(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q9 – Veteranos desde nuevos",
+            "q9_case14_veterans_from_newcomers",
+            timeframe,
             "Sin veteranos recibiendo de emisores nuevos.",
         )
 
@@ -369,7 +414,7 @@ def plot_q9_case14_veterans_from_newcomers(
         hue="caso14_persona_emisores_nuevos_unicos",
         ax=axis,
     )
-    axis.set_title(f"Q9 – Veteranos receptores de nuevos ({timeframe})")
+    _apply_plot_metadata(axis, "q9_case14_veterans_from_newcomers", timeframe)
     axis.set_xlabel("Monto recibido desde emisores nuevos")
     axis.set_ylabel("Receptor veterano")
     axis.legend(title="Emisores únicos")
@@ -387,9 +432,10 @@ def plot_q10_yoyo_streaks(
     data = question10_yoyo_streaks(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q10 – Rachas Yo-Yo",
+            "q10_yoyo_streaks",
+            timeframe,
             "Sin rachas Yo-Yo identificadas.",
         )
 
@@ -415,7 +461,7 @@ def plot_q10_yoyo_streaks(
             fontsize=8,
             ha="left",
         )
-    axis.set_title(f"Q10 – Rachas Yo-Yo ({timeframe})")
+    _apply_plot_metadata(axis, "q10_yoyo_streaks", timeframe)
     axis.set_xlabel("Racha máxima Yo-Yo")
     axis.set_ylabel("Riesgo máximo del par")
     axis.legend(title="Meses Yo-Yo", loc="best")
@@ -433,9 +479,10 @@ def plot_q11_near_threshold_structuring(
     data = question11_near_threshold_structuring(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q11 – Cercanos a umbral",
+            "q11_near_threshold_structuring",
+            timeframe,
             "Sin montos cercanos a umbrales.",
         )
 
@@ -452,7 +499,7 @@ def plot_q11_near_threshold_structuring(
         hue="riesgo_max",
         ax=axis,
     )
-    axis.set_title(f"Q11 – Montos pegados al umbral ({timeframe})")
+    _apply_plot_metadata(axis, "q11_near_threshold_structuring", timeframe)
     axis.set_xlabel("Meses con montos cercanos")
     axis.set_ylabel("Par emisor → receptor")
     axis.legend(title="Riesgo máximo")
@@ -470,9 +517,10 @@ def plot_q12_smurfing_chronic(
     data = question12_smurfing_chronic(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q12 – Smurfing crónico",
+            "q12_smurfing_chronic",
+            timeframe,
             "Sin pares con smurfing prolongado.",
         )
 
@@ -498,7 +546,7 @@ def plot_q12_smurfing_chronic(
             fontsize=8,
             ha="left",
         )
-    axis.set_title(f"Q12 – Smurfing crónico ({timeframe})")
+    _apply_plot_metadata(axis, "q12_smurfing_chronic", timeframe)
     axis.set_xlabel("Meses con smurfing")
     axis.set_ylabel("Monto total smurf")
     axis.legend(title="Riesgo máximo", loc="best")
@@ -516,9 +564,10 @@ def plot_q13_bad_loans_with_frequency(
     data = question13_bad_loans_with_frequency(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q13 – Préstamos y frecuencia",
+            "q13_bad_loans_with_frequency",
+            timeframe,
             "Sin coincidencias de préstamos incobrables.",
         )
 
@@ -535,7 +584,7 @@ def plot_q13_bad_loans_with_frequency(
         hue="eventos_alta_frecuencia",
         ax=axis,
     )
-    axis.set_title(f"Q13 – Préstamos incobrables frecuentes ({timeframe})")
+    _apply_plot_metadata(axis, "q13_bad_loans_with_frequency", timeframe)
     axis.set_xlabel("Monto en préstamos incumplidos")
     axis.set_ylabel("Par emisor → receptor")
     axis.legend(title="Eventos alta frecuencia")
@@ -553,9 +602,10 @@ def plot_q14_recurrent_payroll(
     data = question14_recurrent_payroll(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q14 – Pagos recurrentes",
+            "q14_recurrent_payroll",
+            timeframe,
             "Sin patrones de nómina recurrente.",
         )
 
@@ -574,7 +624,7 @@ def plot_q14_recurrent_payroll(
         hue="meses_recurrentes",
         ax=axis,
     )
-    axis.set_title(f"Q14 – Pagos recurrentes tipo nómina ({timeframe})")
+    _apply_plot_metadata(axis, "q14_recurrent_payroll", timeframe)
     axis.set_xlabel("Monto total pagado")
     axis.set_ylabel("Emisor → Receptor")
     axis.legend(title="Meses recurrentes")
@@ -595,9 +645,10 @@ def plot_q15_coordinated_cluster_signals(
 
     cluster_series = data.get("cluster_id") if "cluster_id" in data else pd.Series(dtype=str)
     if data.empty or (not cluster_series.empty and cluster_series.eq("sin_datos").all()):
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q15 – Clusters coordinados",
+            "q15_coordinated_cluster_signals",
+            timeframe,
             "Sin clusters con señales coordinadas en el periodo seleccionado.",
         )
 
@@ -634,7 +685,7 @@ def plot_q15_coordinated_cluster_signals(
         ax=axis,
         cbar_kws={"label": "% de transacciones con señal"},
     )
-    axis.set_title(f"Q15 – Señales coordinadas por cluster ({timeframe})")
+    _apply_plot_metadata(axis, "q15_coordinated_cluster_signals", timeframe)
     axis.set_xlabel("Señal priorizada")
     axis.set_ylabel("Cluster de personas")
     axis.set_xticklabels(axis.get_xticklabels(), rotation=45, ha="right")
@@ -654,9 +705,10 @@ def plot_q16_multisignal_transactions(
     axis = _ensure_axis(ax, figsize=(10, 6))
 
     if data.empty or data.get("signals_activas", pd.Series(dtype=int)).max() == 0:
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q16 – Transacciones multi-señal",
+            "q16_multisignal_transactions",
+            timeframe,
             "Sin transacciones con múltiples señales en el periodo seleccionado.",
         )
 
@@ -703,7 +755,7 @@ def plot_q16_multisignal_transactions(
             ha="left",
         )
 
-    axis.set_title(f"Q16 – Transacciones con múltiples señales ({timeframe})")
+    _apply_plot_metadata(axis, "q16_multisignal_transactions", timeframe)
     axis.set_xlabel("Monto transaccionado")
     axis.set_ylabel("Riesgo (risk_score)")
     axis.legend(title="Señales activas", loc="best")
@@ -724,9 +776,10 @@ def plot_q17_nlp_person_profiles(
 
     persona_series = data.get("persona") if "persona" in data else pd.Series(dtype=str)
     if data.empty or (not persona_series.empty and persona_series.eq("sin_persona").all()):
-        return _empty_chart(
+        return _render_empty_chart(
             axis,
-            "Q17 – Perfiles NLP",
+            "q17_nlp_person_profiles",
+            timeframe,
             "Sin personas con conceptos NLP sospechosos en el periodo.",
         )
 
@@ -783,7 +836,7 @@ def plot_q17_nlp_person_profiles(
             va="center",
         )
 
-    axis.set_title(f"Q17 – Perfiles NLP sospechosos ({timeframe})")
+    _apply_plot_metadata(axis, "q17_nlp_person_profiles", timeframe)
     axis.set_xlabel("Transacciones NLP sospechosas")
     axis.set_ylabel("Persona")
     axis.legend(title="Riesgo promedio")

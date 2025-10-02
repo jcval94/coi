@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from textwrap import fill
 from typing import Dict, Iterable, Mapping
 
 import pandas as pd
@@ -225,6 +226,123 @@ def run_full_colab_flow(
     )
 
 
+def question_overview(repo_dir: Path | str = DEFAULT_TARGET_DIR) -> pd.DataFrame:
+    """Obtiene títulos, descripciones y metadatos de todas las preguntas Q1–Q17."""
+
+    add_repo_to_path(repo_dir)
+    from experiment_questions import get_question_overview
+
+    overview = get_question_overview()
+    if overview.empty:
+        return overview
+    columns = [
+        "orden",
+        "question_id",
+        "titulo",
+        "descripcion",
+        "funcion",
+        "columna_interpretabilidad",
+    ]
+    return overview.reindex(columns=[col for col in columns if col in overview.columns])
+
+
+def summarize_question_interpretability(
+    reports: Mapping[str, Dict[str, pd.DataFrame]],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    max_rows: int = 3,
+) -> pd.DataFrame:
+    """Resume ejemplos de interpretabilidad para cada pregunta estándar.
+
+    Parameters
+    ----------
+    reports:
+        Diccionario devuelto por :func:`run_pipeline` con todas las secciones
+        necesarias para las preguntas.
+    timeframe:
+        Ventana temporal a consultar (por defecto ``"todo_el_tiempo"``).
+    max_rows:
+        Número máximo de ejemplos de interpretabilidad a mostrar por pregunta.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla ordenada por ``orden`` con columnas de contexto e interpretabilidad
+        condensada en formato multilínea.
+    """
+
+    from experiment_questions import QUESTION_METADATA, run_all_questions
+
+    results = run_all_questions(reports, timeframe=timeframe)
+    rows: list[dict[str, object]] = []
+    for key, df in results.items():
+        meta = QUESTION_METADATA.get(key, {})
+        interpret_col = meta.get("interpretability_column", "interpretabilidad")
+        total_rows = 0
+        examples = "Sin resultados disponibles."
+        columnas_clave = ""
+
+        if isinstance(df, pd.DataFrame):
+            total_rows = int(len(df))
+            if not df.empty:
+                display_cols = [col for col in df.columns if col != interpret_col][:6]
+                if display_cols:
+                    columnas_clave = ", ".join(display_cols)
+                if interpret_col in df.columns:
+                    sample = (
+                        df[interpret_col]
+                        .dropna()
+                        .astype(str)
+                        .head(max_rows)
+                    )
+                    if not sample.empty:
+                        formatted = [
+                            fill(
+                                text,
+                                width=100,
+                                initial_indent="• ",
+                                subsequent_indent="  ",
+                            )
+                            for text in sample
+                        ]
+                        examples = "\n".join(formatted)
+                    else:
+                        examples = "Interpretabilidad sin contenido en las primeras filas."
+                else:
+                    examples = "La columna de interpretabilidad no está disponible."
+            else:
+                examples = "Sin filas para este periodo." if interpret_col in df.columns else examples
+
+        rows.append(
+            {
+                "orden": meta.get("order", 0),
+                "question_id": key,
+                "titulo": meta.get("title", key),
+                "descripcion": meta.get("description", ""),
+                "filas": total_rows,
+                "columna_interpretabilidad": interpret_col,
+                "columnas_clave": columnas_clave,
+                "interpretabilidad_ejemplos": examples,
+            }
+        )
+
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        return summary
+    ordered_cols = [
+        "orden",
+        "question_id",
+        "titulo",
+        "descripcion",
+        "filas",
+        "columnas_clave",
+        "columna_interpretabilidad",
+        "interpretabilidad_ejemplos",
+    ]
+    summary = summary.sort_values("orden").reset_index(drop=True)
+    return summary.reindex(columns=ordered_cols)
+
+
 __all__ = [
     "clone_repo",
     "ensure_packages",
@@ -233,4 +351,6 @@ __all__ = [
     "run_pipeline_from_csv",
     "export_casuistica_to_csv",
     "run_full_colab_flow",
+    "question_overview",
+    "summarize_question_interpretability",
 ]
