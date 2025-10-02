@@ -202,6 +202,36 @@ def question1_manager_nlp(
     timeframe: str = DEFAULT_TIMEFRAME,
     categories: Iterable[str] = NLP_CATEGORIES,
 ) -> pd.DataFrame:
+    """Detecta pagos sospechosos entre managers y subordinados usando etiquetas NLP.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de reportes generado por :func:`run_pipeline` con las
+        secciones tabulares de interés.
+    timeframe
+        Ventana temporal sobre la que se filtran los datos. Por defecto se usa
+        ``"todo_el_tiempo"``.
+    categories
+        Categorías NLP que deben buscarse dentro de los campos de texto; por
+        defecto se emplea :data:`NLP_CATEGORIES`.
+
+    Metodología
+    -----------
+    1. Obtiene la sección de transacciones para el ``timeframe`` solicitado.
+    2. Ejecuta :func:`_manager_nlp_hits` para detectar coincidencias manager-
+       subordinado según las categorías proporcionadas y sus sinónimos.
+    3. Normaliza identificadores de manager y subordinado y descarta registros
+       incompletos.
+    4. Agrega conteos y montos por mes, categoría y par jerárquico para
+       construir la explicación en lenguaje natural.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla priorizada con columnas de interpretabilidad sobre conceptos NLP
+        sospechosos en relaciones manager-subordinado.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     if tx.empty:
         return pd.DataFrame(
@@ -299,6 +329,31 @@ def question1_manager_nlp(
 def question2_manager_concepts(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Resume los conceptos NLP detectados en interacciones manager-subordinado.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de salidas de la canalización con las secciones
+        ``"transaccion"`` y columnas de riesgo asociadas.
+    timeframe
+        Ventana temporal a consultar (``"todo_el_tiempo"`` por defecto).
+
+    Metodología
+    -----------
+    1. Obtiene el detalle de transacciones y calcula los hits NLP mediante
+       :func:`_manager_nlp_hits`.
+    2. Agrupa los resultados por mes y categoría, contando transacciones y
+       estimando el percentil 95 de ``risk_score``.
+    3. Ordena por severidad y redacta textos explicativos con el número de
+       eventos y la intensidad estimada.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con conteos, severidad y explicaciones para cada concepto NLP
+        sospechoso.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     if tx.empty or "risk_score" not in tx:
         return pd.DataFrame(
@@ -361,6 +416,38 @@ def question3_quid_pairs(
     min_score: float = 2.2,
     min_manager_ratio: float = 0.5,
 ) -> pd.DataFrame:
+    """Identifica pares con señales de quid pro quo y los ordena por severidad.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de reportes con secciones de casuística quid y detalle de
+        transacciones.
+    timeframe
+        Ventana temporal a evaluar (por defecto ``"todo_el_tiempo"``).
+    min_score
+        Puntaje mínimo ``quid_score_max`` para considerar un par.
+    min_manager_ratio
+        Proporción mínima de interacciones jerárquicas ``quid_manager_ratio``
+        requerida.
+
+    Metodología
+    -----------
+    1. Prioriza el resumen ``casuistica_quid_pro_quo_par`` y el detalle
+       ``casuistica_quid_pro_quo_tx`` del ``timeframe``.
+    2. Filtra pares con puntaje y proporción jerárquica mayores a los umbrales
+       provistos, verificando aprobaciones o compensaciones.
+    3. Si no hay resultados, reconstruye métricas desde ``transaccion`` aplicando
+       un modo relajado que conserva los mejores puntajes disponibles.
+    4. Genera explicaciones incluyendo transacciones destacadas y la indicación
+       de si se relajaron umbrales.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con pares priorizados, métricas quid pro quo y textos
+        interpretables.
+    """
     pairs = _get_section(reports, "casuistica_quid_pro_quo_par", timeframe)
     tx = _get_section(reports, "casuistica_quid_pro_quo_tx", timeframe)
     base_tx = _get_section(reports, "transaccion", timeframe)
@@ -555,6 +642,31 @@ def question3_quid_pairs(
 def question4_quid_negative_value_vs_load(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Busca autorizaciones con desfases negativos entre valor y carga temporal.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con secciones de transacciones y señales quid.
+    timeframe
+        Ventana temporal analizada (``"todo_el_tiempo"`` por defecto).
+
+    Metodología
+    -----------
+    1. Revisa ``casuistica_quid_pro_quo_tx`` o, en su ausencia, las
+       transacciones base del ``timeframe``.
+    2. Selecciona transacciones con ``feat_quid_value_vs_load_days`` negativo y
+       calcula responsables según la relación jerárquica.
+    3. Si no hay casos negativos, adopta criterios relajados (top 10 por menor
+       desfase o por ``feat_quid_score``).
+    4. Construye interpretabilidad detallando desfase, puntaje y responsable.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla de autorizaciones sospechosas con columnas explicativas sobre el
+        desfase identificado.
+    """
     tx = _get_section(reports, "casuistica_quid_pro_quo_tx", timeframe)
     base_tx = _get_section(reports, "transaccion", timeframe)
     if tx.empty and not base_tx.empty:
@@ -657,6 +769,35 @@ def question4_quid_negative_value_vs_load(
 def question5_reference_reuse(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Detecta reutilización sospechosa de referencias de pago en corto plazo.
+
+    Parameters
+    ----------
+    reports
+        Reportes agregados con secciones de casuística de referencias y
+        transacciones base.
+    timeframe
+        Ventana temporal seleccionada (``"todo_el_tiempo"`` por defecto).
+
+    Metodología
+    -----------
+    1. Prioriza ``casuistica_referencia_resumen`` y ``casuistica_referencia_tx``
+       para identificar referencias compartidas por múltiples pares.
+    2. Ordena las referencias por número de pares, rango de días y cantidad de
+       transacciones, concentrándose en reutilización dentro de 30 días.
+    3. Si faltan los resúmenes, reconstruye la métrica desde ``transaccion`` y
+       normaliza la descripción para comparar equivalencias.
+    4. En ausencia de candidatos estrictos, activa un modo relajado que lista
+       las referencias más frecuentes.
+    5. Redacta interpretabilidad con detalles de pares y transacciones
+       involucrados.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con referencias recurrentes, métricas temporales y explicaciones
+        en español.
+    """
     summary = _get_section(reports, "casuistica_referencia_resumen", timeframe)
     tx = _get_section(reports, "casuistica_referencia_tx", timeframe)
     base_tx = _get_section(reports, "transaccion", timeframe)
@@ -833,6 +974,29 @@ def question5_reference_reuse(
 def question6_centralizers(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Prioriza receptores que actúan como nodos centralizadores de fondos.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de reportes con la sección ``"transaccion"``.
+    timeframe
+        Ventana temporal a evaluar (valor por defecto ``"todo_el_tiempo"``).
+
+    Metodología
+    -----------
+    1. Agrega las transacciones por mes y receptor calculando inflow total,
+       emisores únicos, número de transacciones y riesgo promedio.
+    2. Deriva una métrica de centralidad multiplicando inflow por emisores
+       únicos para ordenar los resultados.
+    3. Construye explicaciones resaltando montos, riesgo y diversidad de
+       emisores para cada receptor.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla mensual con receptores centralizadores y columnas interpretables.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     if tx.empty or "month_id" not in tx:
         return pd.DataFrame(
@@ -890,6 +1054,30 @@ def question6_centralizers(
 def question7_net_imbalance(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Enumera personas con fuerte desbalance neto entre envíos y recepciones.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con la sección ``"persona"`` producida por la canalización.
+    timeframe
+        Ventana temporal sobre la cual calcular el desbalance (``"todo_el_tiempo"``
+        por defecto).
+
+    Metodología
+    -----------
+    1. Asegura la presencia de ``desbalance_persona_monto_neto`` y calcula su
+       valor absoluto para priorizar los casos extremos.
+    2. Conserva métricas adicionales como meses con máximo envío/recepción y
+       banderas asociadas.
+    3. Genera explicaciones destacando montos, flujo neto y meses críticos.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con personas desbalanceadas, métricas netas y comentarios
+        interpretables.
+    """
     personas = _get_section(reports, "persona", timeframe)
     if personas.empty:
         return pd.DataFrame(
@@ -939,6 +1127,31 @@ def question7_net_imbalance(
 def question8_case13_new_employees(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Detecta receptores recién incorporados que reciben montos altos.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de reportes con la sección ``"persona"`` y banderas del
+        caso 13.
+    timeframe
+        Ventana temporal analizada (valor por defecto ``"todo_el_tiempo"``).
+
+    Metodología
+    -----------
+    1. Filtra personas con la bandera ``caso13_persona_flag_nuevo_receptor_altos_montos``.
+    2. Calcula totales recibidos, emisores únicos, montos promedio y meses
+       transcurridos desde la primera recepción.
+    3. Prioriza a quienes concentran montos en el percentil 90 durante sus
+       primeros seis meses de actividad.
+    4. Redacta interpretabilidad destacando el carácter reciente y el volumen
+       recibido.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con receptores nuevos de alto monto y explicaciones asociadas.
+    """
     personas = _get_section(reports, "persona", timeframe)
     required = [
         "persona",
@@ -1012,6 +1225,31 @@ def question8_case13_new_employees(
 def question9_case14_veterans_from_newcomers(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
 ) -> pd.DataFrame:
+    """Prioriza veteranos que reciben pagos de emisores nuevos dentro de la red.
+
+    Parameters
+    ----------
+    reports
+        Diccionario de reportes con la sección ``"persona"`` y banderas del
+        caso 14.
+    timeframe
+        Ventana temporal a analizar (``"todo_el_tiempo"`` por defecto).
+
+    Metodología
+    -----------
+    1. Identifica personas con la bandera
+       ``caso14_persona_flag_antiguo_recibe_de_nuevos`` o reconstruye la métrica
+       desde las transacciones base.
+    2. Calcula montos y transacciones recibidas desde emisores recientes,
+       incluyendo promedios y emisores únicos.
+    3. Ordena los resultados por monto y riesgo, redactando interpretabilidad
+       sobre la relación veterano-novato.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con veteranos relevantes, sus métricas de recepción y contexto.
+    """
     personas = _get_section(reports, "persona", timeframe)
     required = [
         "persona",
@@ -1201,6 +1439,34 @@ def question10_yoyo_streaks(
     min_consecutive: int = 2,
     risk_threshold: float = 1.8,
 ) -> pd.DataFrame:
+    """Detecta rachas yo-yo prolongadas entre pares bidireccionales.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con secciones de transacciones y resúmenes de pares.
+    timeframe
+        Ventana temporal objetivo (``"todo_el_tiempo"`` por defecto).
+    min_consecutive
+        Número mínimo de eventos consecutivos para considerar una racha.
+    risk_threshold
+        Riesgo mínimo del par (``pair_risk_max``) para priorizar el resultado.
+
+    Metodología
+    -----------
+    1. Usa la bandera ``sig_yoyo`` dentro de ``transaccion`` para agrupar
+       secuencias de ida y vuelta por par.
+    2. Complementa con el resumen ``par_personas`` para incorporar montos y
+       riesgo.
+    3. Aplica umbrales de racha mínima y riesgo; cuando faltan banderas recurre
+       a heurísticas basadas en ventanas horarias.
+    4. Construye textos interpretables describiendo duración, riesgo y montos.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con pares yo-yo priorizados y explicaciones detalladas.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
         COL_SENDER_ID,
@@ -1458,6 +1724,34 @@ def question11_near_threshold_structuring(
     min_months: int = 3,
     delta_limit: float = 10.0,
 ) -> pd.DataFrame:
+    """Identifica pares con montos cercanos a umbrales regulatorios.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con la sección ``"transaccion"`` y banderas ``sig_near_thr``.
+    timeframe
+        Ventana temporal objetivo (por defecto ``"todo_el_tiempo"``).
+    min_months
+        Meses mínimos con eventos cercanos al umbral para considerar al par.
+    delta_limit
+        Diferencia máxima respecto al umbral para incluir la transacción.
+
+    Metodología
+    -----------
+    1. Filtra transacciones con bandera near-threshold y deltas pequeños, o
+       estima la distancia a umbrales comunes cuando falta la métrica.
+    2. Cuenta meses con recurrencia y agrega montos, riesgos y desviaciones
+       promedio.
+    3. Aplica filtros de ``min_months`` y ``delta_limit``; si es necesario,
+       relaja umbrales o aplica heurísticas basadas en cuantiles.
+    4. Redacta interpretabilidad indicando cercanía al umbral y riesgo asociado.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla de pares con structuring cercano a umbrales y explicaciones.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
         COL_SENDER_ID,
@@ -1651,6 +1945,31 @@ def question11_near_threshold_structuring(
 def question12_smurfing_chronic(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 3
 ) -> pd.DataFrame:
+    """Localiza pares con depósitos fragmentados de manera crónica (smurfing).
+
+    Parameters
+    ----------
+    reports
+        Diccionario con transacciones y banderas ``sig_smurf``.
+    timeframe
+        Ventana temporal evaluada (``"todo_el_tiempo"`` por defecto).
+    min_months
+        Cantidad mínima de meses con eventos smurf para priorizar el par.
+
+    Metodología
+    -----------
+    1. Selecciona transacciones marcadas con ``sig_smurf`` o reconstruye la
+       etiqueta usando cuantiles por par cuando no está disponible.
+    2. Agrega montos, riesgo promedio y máximo por mes, contando meses con
+       fragmentación recurrente.
+    3. Filtra por ``min_months`` y redacta interpretabilidad con el patrón
+       crónico observado, indicando si se relajaron criterios.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla de pares con smurfing crónico y descripciones de su comportamiento.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
         COL_SENDER_ID,
@@ -1815,6 +2134,35 @@ def question12_smurfing_chronic(
 def question13_bad_loans_with_frequency(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 2
 ) -> pd.DataFrame:
+    """Cruza préstamos incumplidos con ráfagas de frecuencia elevada.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con transacciones y banderas ``sig_loan_bad_repay`` y
+        ``sig_freq``.
+    timeframe
+        Ventana temporal a analizar (por defecto ``"todo_el_tiempo"``).
+    min_months
+        Meses mínimos con coincidencia entre préstamos incumplidos y frecuencia
+        elevada.
+
+    Metodología
+    -----------
+    1. Identifica transacciones con banderas de préstamo incumplido y alta
+       frecuencia, calculando coincidencias mensuales por par.
+    2. Cuando faltan banderas, emplea heurísticas para estimar préstamos,
+       reembolsos y umbrales de frecuencia.
+    3. Agrega montos, riesgos y meses coincidentes, priorizando los pares con
+       mayor severidad y aplicando criterios relajados cuando es necesario.
+    4. Genera interpretabilidad explicando la superposición de señales.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con pares sospechosos de préstamos irregulares frecuentes y sus
+        explicaciones.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
         COL_SENDER_ID,
@@ -2118,6 +2466,33 @@ def question13_bad_loans_with_frequency(
 def question14_recurrent_payroll(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 3
 ) -> pd.DataFrame:
+    """Resalta pagos recurrentes tipo nómina entre pares específicos.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con transacciones y bandera ``sig_recurrent``.
+    timeframe
+        Ventana temporal analizada (``"todo_el_tiempo"`` por defecto).
+    min_months
+        Meses consecutivos mínimos con pagos recurrentes para priorizar un par.
+
+    Metodología
+    -----------
+    1. Identifica transacciones marcadas como recurrentes o reconstruye el
+       patrón por calendario cuando faltan banderas.
+    2. Agrega por emisor, receptor y día de corte contabilizando meses, pagos y
+       montos totales/promedio.
+    3. Filtra por ``min_months`` y presencia de la bandera (si existe), aplicando
+       criterios relajados en ausencia de coincidencias estrictas.
+    4. Genera interpretabilidad destacando periodicidad, totales y posibles
+       nóminas paralelas.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con pagos recurrentes priorizados y explicaciones.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
         COL_SENDER_ID,
@@ -2238,6 +2613,32 @@ def question14_recurrent_payroll(
 def question15_coordinated_cluster_signals(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 10
 ) -> pd.DataFrame:
+    """Sintetiza clusters de personas con múltiples señales coordinadas.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con la sección ``"clusters_personas"`` y métricas asociadas.
+    timeframe
+        Ventana temporal objetivo (``"todo_el_tiempo"`` por defecto).
+    top_n
+        Número máximo de clusters priorizados en la salida.
+
+    Metodología
+    -----------
+    1. Extrae indicadores de señales (yo-yo, smurfing, ciclos, quid y
+       referencia reutilizada) junto con métricas de tamaño, montos y riesgo.
+    2. Calcula cuántas señales activas tiene cada cluster y normaliza montos y
+       conteos para ordenar la prioridad.
+    3. Describe la persona más desbalanceada y el detalle porcentual de cada
+       señal en la interpretabilidad.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con los principales clusters, sus señales activas y contexto
+        interpretativo.
+    """
     clusters = _get_section(reports, "clusters_personas", timeframe)
     signal_cols = {
         "yo_yo_cluster_tasa_flag": "yo-yo",
@@ -2381,6 +2782,33 @@ def question15_coordinated_cluster_signals(
 def question16_multisignal_transactions(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 25
 ) -> pd.DataFrame:
+    """Lista transacciones que acumulan múltiples señales simultáneas.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con la sección ``"transaccion"`` y banderas de señales.
+    timeframe
+        Ventana temporal analizada (por defecto ``"todo_el_tiempo"``).
+    top_n
+        Número máximo de transacciones priorizadas en la salida.
+
+    Metodología
+    -----------
+    1. Consolida banderas de jerarquía, yo-yo, smurf, near-threshold, quid y
+       cambios bruscos por transacción.
+    2. Cuenta cuántas señales están activas por registro y ordena por número de
+       señales, riesgo y monto.
+    3. Selecciona el umbral más alto posible (3, luego 2, luego 1 señal) para
+       devolver hasta ``top_n`` operaciones.
+    4. Genera interpretabilidad con monto, riesgo, relación declarada,
+       descripción y nota sobre el umbral aplicado.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con operaciones multisignal y su explicación detallada.
+    """
     tx = _get_section(reports, "transaccion", timeframe)
     signal_cols = {
         "flag_jerarquia": "jerarquía",
@@ -2529,6 +2957,31 @@ def question16_multisignal_transactions(
 def question17_nlp_person_profiles(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 15
 ) -> pd.DataFrame:
+    """Prioriza personas con perfiles NLP sospechosos y resume su contexto.
+
+    Parameters
+    ----------
+    reports
+        Diccionario con las secciones ``"persona"`` y ``"persona_concepto"``.
+    timeframe
+        Ventana temporal objetivo (``"todo_el_tiempo"`` por defecto).
+    top_n
+        Máximo de personas resaltadas en el resultado.
+
+    Metodología
+    -----------
+    1. Combina métricas por persona con los conceptos NLP detectados para cada
+       individuo.
+    2. Calcula proporciones de transacciones sospechosas respecto al total, así
+        como montos netos recibidos/enviados y riesgo promedio.
+    3. Ordena por volumen sospechoso y riesgo, generando interpretabilidad que
+       resume conceptos principales y desequilibrio neto.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con perfiles NLP prioritarios y explicaciones contextualizadas.
+    """
     personas = _get_section(reports, "persona", timeframe)
     conceptos = _get_section(reports, "persona_concepto", timeframe)
 
