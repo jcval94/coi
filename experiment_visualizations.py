@@ -5,8 +5,10 @@ from typing import Optional
 from textwrap import fill
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib import colors
 from matplotlib.axes import Axes
 
 from coi_fraud.schemas import COL_RECEIVER_ID, COL_SENDER_ID
@@ -678,11 +680,26 @@ def plot_q15_coordinated_cluster_signals(
         * 100
     )
 
+    display_df = heatmap_df.replace(0.0, float("nan"))
+    mask = display_df.isna()
+    annotations = heatmap_df.where(~mask)
+    if display_df.empty or display_df.isna().all().all():
+        vmax = 1.0
+    else:
+        vmax = float(np.nanmax(display_df.values))
+        if not np.isfinite(vmax) or vmax <= 0:
+            vmax = 1.0
+    norm = colors.PowerNorm(gamma=0.6, vmin=0.0, vmax=vmax)
+
     sns.heatmap(
-        heatmap_df,
-        annot=True,
+        display_df,
+        annot=annotations,
         fmt=".0f",
-        cmap="OrRd",
+        cmap="YlOrRd",
+        norm=norm,
+        linewidths=0.6,
+        linecolor="#f0f0f0",
+        mask=mask,
         ax=axis,
         cbar_kws={"label": "% de transacciones con señal"},
     )
@@ -690,6 +707,23 @@ def plot_q15_coordinated_cluster_signals(
     axis.set_xlabel("Señal priorizada")
     axis.set_ylabel("Cluster de personas")
     axis.set_xticklabels(axis.get_xticklabels(), rotation=45, ha="right")
+    axis.set_xlim(-0.5, len(signal_cols) - 0.5 + 1.6)
+
+    for idx, (_, row) in enumerate(work.iterrows()):
+        axis.text(
+            len(signal_cols) + 0.35,
+            idx + 0.5,
+            (
+                f"{int(row.get('signals_activas', 0))} señales · "
+                f"riesgo {row.get('riesgo_cluster_maximo', 0):.2f} · "
+                f"{int(row.get('cluster_tx_count', 0))} tx"
+            ),
+            va="center",
+            ha="left",
+            fontsize=10,
+            color="#333333",
+        )
+
     return axis
 
 
