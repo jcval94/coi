@@ -799,14 +799,22 @@ def plot_q17_nlp_person_profiles(
     work["proporcion_sospechosa"] = (
         pd.to_numeric(work.get("proporcion_sospechosa", 0.0), errors="coerce").fillna(0.0)
     )
+    work["score_probable_coi"] = (
+        pd.to_numeric(work.get("score_probable_coi", 0.0), errors="coerce").fillna(0.0)
+    )
+    work["sentimiento_promedio"] = (
+        pd.to_numeric(work.get("sentimiento_promedio", 0.0), errors="coerce").fillna(0.0)
+    )
+    if "sentimiento_etiqueta" not in work:
+        work["sentimiento_etiqueta"] = "neutral"
     work["top_conceptos_display"] = (
         work.get("top_conceptos_display", "sin_top_conceptos")
         .fillna("sin_top_conceptos")
         .astype(str)
     )
     work = work.sort_values(
-        ["tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
-        ascending=[False, False, False],
+        ["score_probable_coi", "tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
+        ascending=[False, False, False, False],
     ).head(top_n)
 
     bins = [-float("inf"), 1.0, 2.0, 3.0, float("inf")]
@@ -817,10 +825,10 @@ def plot_q17_nlp_person_profiles(
 
     scatter = sns.scatterplot(
         data=work,
-        x="tx_sospechosas_nlp",
+        x="score_probable_coi",
         y="persona",
         hue="riesgo_categoria",
-        size="conceptos_unicos",
+        size="tx_sospechosas_nlp",
         palette="magma",
         sizes=(60, 280),
         legend="brief",
@@ -829,15 +837,19 @@ def plot_q17_nlp_person_profiles(
 
     for _, row in work.iterrows():
         scatter.text(
-            row["tx_sospechosas_nlp"] + 0.1,
+            row["score_probable_coi"] + 0.05,
             row["persona"],
-            f"{row.get('top_conceptos_display', 'sin_top_conceptos')} ({row.get('proporcion_sospechosa', 0):.0%})",
+            (
+                f"{row.get('top_conceptos_display', 'sin_top_conceptos')} "
+                f"(tx={int(row.get('tx_sospechosas_nlp', 0))}, score={row.get('score_probable_coi', 0):.2f}, "
+                f"sent={row.get('sentimiento_etiqueta', 'neutral')})"
+            ),
             fontsize=8,
             va="center",
         )
 
     _apply_plot_metadata(axis, "q17_nlp_person_profiles", timeframe)
-    axis.set_xlabel("Transacciones NLP sospechosas")
+    axis.set_xlabel("Score probable COI (mayor es más riesgoso)")
     axis.set_ylabel("Persona")
     axis.legend(title="Riesgo promedio")
     return axis

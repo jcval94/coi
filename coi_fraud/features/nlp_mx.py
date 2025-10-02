@@ -16,4 +16,7 @@ def apply_nlp(df: pd.DataFrame) -> pd.DataFrame:
     df2["feat_nlp_risk_points"] = out["riesgo_puntos"]
     df2["feat_nlp_vaguedad"] = out["vaguedad"]
     df2["feat_nlp_emocion"] = out["emocion"]
+    df2["feat_nlp_sentimiento"] = out["sentimiento"]
+    df2["feat_nlp_coi_score"] = out["score_probable_coi"]
+    df2["nlp_evento_corporativo"] = out["evento_corporativo"]
     return df2

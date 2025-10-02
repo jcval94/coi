@@ -8,7 +8,22 @@ def compute_risk(df: pd.DataFrame) -> pd.DataFrame:
 
     part_z   = zpos * W["zscore"]
     part_h   = df["relacion"].astype(str).str.contains("Manager", na=False).astype(float) * W["hierarchy"]
-    part_nlp = ( (df["feat_nlp_vaguedad"].astype(float) + (df["feat_nlp_emocion"].astype(float)>0).astype(float)*0.5) * 0.5 * W["nlp"] ) + (df["feat_nlp_risk_points"].astype(float)*0.15)
+    vag = df["feat_nlp_vaguedad"].astype(float)
+    emo_flag = (df["feat_nlp_emocion"].astype(float) > 0).astype(float)
+    senti = df.get("feat_nlp_sentimiento", 0.0)
+    senti = pd.Series(senti, index=df.index).astype(float)
+    senti_component = senti.abs() * 0.25
+    coi_extra = df.get("feat_nlp_coi_score", 0.0)
+    coi_extra = pd.Series(coi_extra, index=df.index).astype(float) * 0.18
+    evento_flag = df.get("nlp_evento_corporativo", False)
+    evento_flag = pd.Series(evento_flag, index=df.index).astype(float) * 0.2
+    part_nlp = (
+        (vag + emo_flag * 0.5) * 0.45 * W["nlp"]
+        + df["feat_nlp_risk_points"].astype(float) * 0.12
+        + senti_component
+        + coi_extra
+        + evento_flag
+    )
     part_rnd = df["sig_roundsum"].astype(float) * W["roundsum"]
     part_thr = df["sig_near_thr"].astype(float) * W["nearthr"]
     part_smf = df["sig_smurf"].astype(float) * W["smurf"]
