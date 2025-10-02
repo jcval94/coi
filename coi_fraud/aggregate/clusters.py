@@ -3,7 +3,7 @@ from typing import Dict, Iterable, List, Set
 
 import pandas as pd
 
-from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_SENDER_ID
+from ..schemas import COL_AMOUNT, COL_DESCRIPTION, COL_RECEIVER_ID, COL_SENDER_ID
 
 
 def _build_components(edges: Iterable[tuple]) -> List[Set]:
@@ -38,16 +38,34 @@ def _build_components(edges: Iterable[tuple]) -> List[Set]:
     return components
 
 
-def _top_concepts(df: pd.DataFrame) -> List[str]:
-    if df.empty:
+def _collect_texts(series: pd.Series) -> List[str]:
+    if series is None or series.empty:
         return []
+    texts = series.astype("string").fillna("").str.strip()
+    return [text for text in texts.tolist() if text]
+
+
+def _top_concepts(df: pd.DataFrame) -> tuple[List[str], List[List[str]]]:
+    if df.empty:
+        return [], []
+    work = df.copy()
+    text_series = work.get(COL_DESCRIPTION)
+    if text_series is None:
+        text_series = pd.Series("", index=work.index, dtype="string")
+    else:
+        text_series = text_series.astype("string").fillna("").str.strip()
+    work["_nlp_texto_original"] = text_series
     counts = (
-        df.groupby("nlp_concepto_sospechoso", observed=True)[COL_AMOUNT]
-        .count()
-        .reset_index(name="cnt")
+        work.groupby("nlp_concepto_sospechoso", observed=True)
+        .agg(
+            cnt=(COL_AMOUNT, "count"),
+            textos=("_nlp_texto_original", _collect_texts),
+        )
+        .reset_index()
         .sort_values(["cnt", "nlp_concepto_sospechoso"], ascending=[False, True])
     )
-    return counts["nlp_concepto_sospechoso"].head(3).tolist()
+    top = counts.head(3)
+    return top["nlp_concepto_sospechoso"].tolist(), top["textos"].tolist()
 
 
 def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
@@ -64,6 +82,7 @@ def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
                 "nlp_cluster_total_transacciones_sospechosas",
                 "nlp_cluster_conceptos_sospechosos_unicos",
                 "nlp_cluster_top_conceptos",
+                "nlp_cluster_top_textos",
                 "yo_yo_cluster_tasa_flag",
                 "smurf_cluster_tasa_flag",
                 "frecuencia_cluster_tasa_flag",
@@ -112,6 +131,8 @@ def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
         riesgo_avg = cluster_df["risk_score"].mean()
         riesgo_max = float(riesgo_max) if pd.notna(riesgo_max) else 0.0
         riesgo_avg = float(riesgo_avg) if pd.notna(riesgo_avg) else 0.0
+        top_concepts, top_texts = _top_concepts(suspicious_df)
+
         record = {
             "cluster_id": f"cluster_{idx}",
             "cluster_personas": sorted(comp),
@@ -124,7 +145,8 @@ def build_person_clusters(df: pd.DataFrame) -> pd.DataFrame:
             "nlp_cluster_conceptos_sospechosos_unicos": int(
                 suspicious_df["nlp_concepto_sospechoso"].nunique()
             ),
-            "nlp_cluster_top_conceptos": _top_concepts(suspicious_df),
+            "nlp_cluster_top_conceptos": top_concepts,
+            "nlp_cluster_top_textos": top_texts,
             "yo_yo_cluster_tasa_flag": float(cluster_df["sig_yoyo"].fillna(0.0).mean()),
             "smurf_cluster_tasa_flag": float(cluster_df["sig_smurf"].fillna(0.0).mean()),
             "frecuencia_cluster_tasa_flag": float(cluster_df["sig_freq"].fillna(0.0).mean()),

@@ -3,6 +3,7 @@ import pandas as pd
 from ..interpret.person import person_interpretation
 from ..schemas import (
     COL_AMOUNT,
+    COL_DESCRIPTION,
     COL_RECEIVER_ID,
     COL_RECEIVER_TENURE_YEARS,
     COL_SENDER_ID,
@@ -21,6 +22,13 @@ CASE14_MIN_UNIQUE_SENDERS = 3
 
 def _ensure_string(series: pd.Series) -> pd.Series:
     return series.fillna("").astype("string").str.strip()
+
+
+def _collect_texts(series: pd.Series) -> list[str]:
+    if series is None or series.empty:
+        return []
+    texts = series.astype("string").fillna("").str.strip()
+    return [text for text in texts.tolist() if text]
 
 
 def _safe_zscore(series: pd.Series) -> pd.Series:
@@ -280,8 +288,14 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
     people["risk_avg_person"] = (people["risk_avg_em"] + people["risk_avg_re"]) / 2.0
 
     concept_series = _ensure_string(df.get("nlp_concepto_sospechoso", ""))
+    text_series = df.get(COL_DESCRIPTION)
+    if text_series is None:
+        text_series = pd.Series("", index=df.index, dtype="string")
+    else:
+        text_series = text_series.astype("string").fillna("").str.strip()
     df_concepts = df.loc[concept_series != ""].copy()
     df_concepts["nlp_concepto_sospechoso"] = concept_series.loc[df_concepts.index]
+    df_concepts["_nlp_texto_original"] = text_series.loc[df_concepts.index]
 
     if not df_concepts.empty:
         suspicious_counts = (
@@ -294,11 +308,14 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
             .rename(columns={COL_SENDER_ID: "persona"})
         )
         topc = (
-            df_concepts.groupby([COL_SENDER_ID, "nlp_concepto_sospechoso"], observed=True)[
-                COL_AMOUNT
-            ]
-            .count()
-            .reset_index(name="cnt")
+            df_concepts.groupby(
+                [COL_SENDER_ID, "nlp_concepto_sospechoso"], observed=True
+            )
+            .agg(
+                cnt=(COL_AMOUNT, "count"),
+                textos=("_nlp_texto_original", _collect_texts),
+            )
+            .reset_index()
         )
         topc = (
             topc.sort_values([COL_SENDER_ID, "cnt"], ascending=[True, False])
@@ -306,9 +323,11 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
             .head(3)
         )
         tops = (
-            topc.groupby(COL_SENDER_ID)["nlp_concepto_sospechoso"]
-            .apply(list)
-            .rename("nlp_persona_top_conceptos")
+            topc.groupby(COL_SENDER_ID)
+            .agg(
+                nlp_persona_top_conceptos=("nlp_concepto_sospechoso", list),
+                nlp_persona_top_textos=("textos", list),
+            )
             .reset_index()
             .rename(columns={COL_SENDER_ID: "persona"})
         )
@@ -318,6 +337,7 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
         people["nlp_persona_total_transacciones_sospechosas"] = 0
         people["nlp_persona_conceptos_sospechosos_unicos"] = 0
         people["nlp_persona_top_conceptos"] = [[] for _ in range(len(people))]
+        people["nlp_persona_top_textos"] = [[] for _ in range(len(people))]
 
     for col in [
         "nlp_persona_total_transacciones_sospechosas",
@@ -331,6 +351,12 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
         people["nlp_persona_top_conceptos"] = [[] for _ in range(len(people))]
     else:
         people["nlp_persona_top_conceptos"] = people["nlp_persona_top_conceptos"].apply(
+            lambda x: x if isinstance(x, list) else ([] if pd.isna(x) else [x])
+        )
+    if "nlp_persona_top_textos" not in people:
+        people["nlp_persona_top_textos"] = [[] for _ in range(len(people))]
+    else:
+        people["nlp_persona_top_textos"] = people["nlp_persona_top_textos"].apply(
             lambda x: x if isinstance(x, list) else ([] if pd.isna(x) else [x])
         )
 
@@ -624,6 +650,13 @@ def build_person_monthly(df: pd.DataFrame) -> pd.DataFrame:
     else:
         people["top_conceptos"] = [[] for _ in range(len(people))]
     people["top_conceptos"] = people["top_conceptos"].apply(lambda x: x if isinstance(x, list) else [])
+    if "nlp_persona_top_textos" in people:
+        people["top_textos"] = people["nlp_persona_top_textos"]
+    else:
+        people["top_textos"] = [[] for _ in range(len(people))]
+    people["top_textos"] = people["top_textos"].apply(
+        lambda x: x if isinstance(x, list) else []
+    )
     people["interp_person"] = people.apply(person_interpretation, axis=1)
     return people.sort_values(
         ["risk_avg_person", "sum_emit", "sum_recv"], ascending=[False, False, False]

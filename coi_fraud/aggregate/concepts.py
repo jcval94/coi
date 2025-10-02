@@ -1,6 +1,17 @@
 import pandas as pd
 
-from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_SENDER_ID
+from ..schemas import COL_AMOUNT, COL_DESCRIPTION, COL_RECEIVER_ID, COL_SENDER_ID
+
+
+def _collect_texts(series: pd.Series) -> list[str]:
+    if series is None or series.empty:
+        return []
+    texts = (
+        series.astype("string")
+        .fillna("")
+        .str.strip()
+    )
+    return [text for text in texts.tolist() if text]
 
 
 def _suspicious_concepts(df: pd.DataFrame) -> pd.DataFrame:
@@ -30,6 +41,7 @@ def build_concept_tables(df: pd.DataFrame):
                 "nlp_concepto_receptores_unicos",
                 "nlp_concepto_riesgo_promedio",
                 "nlp_concepto_riesgo_p95",
+                "nlp_concepto_textos_originales",
             ]
         )
         persona = pd.DataFrame(
@@ -39,6 +51,7 @@ def build_concept_tables(df: pd.DataFrame):
                 "nlp_persona_concepto_tx_total",
                 "nlp_persona_concepto_monto_total",
                 "nlp_persona_concepto_riesgo_promedio",
+                "nlp_persona_concepto_textos",
             ]
         )
         par = pd.DataFrame(
@@ -48,9 +61,19 @@ def build_concept_tables(df: pd.DataFrame):
                 "nlp_par_concepto_tx_total",
                 "nlp_par_concepto_monto_total",
                 "nlp_par_concepto_riesgo_promedio",
+                "nlp_par_concepto_textos",
             ]
         )
         return conceptos, persona, par
+
+    text_series = df.get(COL_DESCRIPTION)
+    if text_series is None:
+        text_series = pd.Series("", index=df.index, dtype="string")
+    else:
+        text_series = text_series.astype("string").fillna("").str.strip()
+
+    txc = txc.copy()
+    txc["_nlp_texto_original"] = text_series.loc[txc.index]
 
     agg_concepto = (
         txc.groupby("nlp_concepto_sospechoso", observed=True)
@@ -63,6 +86,10 @@ def build_concept_tables(df: pd.DataFrame):
             nlp_concepto_riesgo_p95=(
                 "risk_score",
                 lambda s: float(s.quantile(0.95)) if len(s) else 0.0,
+            ),
+            nlp_concepto_textos_originales=(
+                "_nlp_texto_original",
+                _collect_texts,
             ),
         )
         .reset_index()
@@ -78,6 +105,10 @@ def build_concept_tables(df: pd.DataFrame):
             nlp_persona_concepto_tx_total=(COL_AMOUNT, "count"),
             nlp_persona_concepto_monto_total=(COL_AMOUNT, "sum"),
             nlp_persona_concepto_riesgo_promedio=("risk_score", "mean"),
+            nlp_persona_concepto_textos=(
+                "_nlp_texto_original",
+                _collect_texts,
+            ),
         )
         .reset_index()
         .rename(columns={COL_SENDER_ID: "persona"})
@@ -90,6 +121,10 @@ def build_concept_tables(df: pd.DataFrame):
             nlp_par_concepto_tx_total=(COL_AMOUNT, "count"),
             nlp_par_concepto_monto_total=(COL_AMOUNT, "sum"),
             nlp_par_concepto_riesgo_promedio=("risk_score", "mean"),
+            nlp_par_concepto_textos=(
+                "_nlp_texto_original",
+                _collect_texts,
+            ),
         )
         .reset_index()
     )
