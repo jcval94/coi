@@ -125,30 +125,100 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
 - **Q1 – Manager con conceptos NLP sospechosos** (`question1_manager_nlp`):
   - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes, categoría detectada, manager y subordinado para resumir `tx_count` y `monto_total` y generar textos explicativos.
   - **Parámetros clave:** `timeframe`; `categories` (lista de categorías NLP, por defecto las cinco anteriores).
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q1_manager_nlp
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plot_q1_manager_nlp(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q2 – Conceptos NLP con mayor severidad** (`question2_manager_concepts`):
   - **Metodología:** reutiliza la detección de Q1 sobre `reports["transaccion"][timeframe]` y agrega por mes y categoría calculando número de transacciones y el cuantil 0.95 de `risk_score`, ordenando por severidad antes de redactar la explicación.
   - **Parámetros clave:** `timeframe`; categorías NLP internas (idénticas a Q1, sin exponer otro parámetro).
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q2_manager_concepts
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plot_q2_manager_concepts(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q3 – Pares con rasgos Quid Pro Quo** (`question3_quid_pairs`):
   - **Metodología:** parte del resumen `reports["casuistica_quid_pro_quo_par"][timeframe]` y del detalle `reports["casuistica_quid_pro_quo_tx"][timeframe]` (o de `transaccion` si faltan). Selecciona pares con `quid_score_max ≥ min_score` (2.2 por defecto), proporción de interacciones jerárquicas (`quid_manager_ratio`) superior a `min_manager_ratio` (0.5) y alguna aprobación o compensación. Si no hay resultados, recurre a las transacciones base calculando agregados por par, con un modo relajado que prioriza los puntajes más altos disponibles. Complementa con un listado de transacciones destacadas por `feat_quid_score` y, si fue necesario, con umbrales relajados.
   - **Parámetros clave:** `timeframe`; `min_score` (float, 2.2 por defecto); `min_manager_ratio` (float, 0.5 por defecto).
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q3_quid_pairs
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q3_quid_pairs(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q4 – Autorizaciones con valor negativo vs. carga** (`question4_quid_negative_value_vs_load`):
   - **Metodología:** inspecciona `casuistica_quid_pro_quo_tx` (o `transaccion` como respaldo) buscando transacciones con `feat_quid_value_vs_load_days < 0`. Si no existen, selecciona las 10 con menores desfases registrados o, en su defecto, los mayores puntajes `feat_quid_score`. Calcula el posible responsable según la relación jerárquica (`relacion`/`feat_quid_rel_label`) y redacta el resumen indicando desfase, puntaje y responsable identificado; marca explícitamente cuando se usó el criterio relajado.
   - **Parámetros clave:** `timeframe`.
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q4_negative_value_vs_load
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q4_negative_value_vs_load(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q5 – Reutilización de referencias de pago** (`question5_reference_reuse`):
   - **Metodología:** trabaja con `casuistica_referencia_resumen` y `casuistica_referencia_tx`. Prioriza referencias que aparezcan en más de un par (`n_pairs > 1`), ordenadas por número de pares, rango de días (`days_range`) y transacciones. Si esos datos no existen, reconstruye la métrica desde `transaccion` usando `feat_reference_norm` (o normalizando `descripcion`), calcula métricas temporales y filtra por reutilización en ≤30 días; de no haber candidatos, activa un modo relajado que lista las referencias más frecuentes. Finalmente, detalla las transacciones asociadas a cada referencia recurrente.
   - **Parámetros clave:** `timeframe` (el resto de umbrales y normalizaciones están codificados en la función; no se exponen parámetros adicionales).
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q5_reference_reuse
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q5_reference_reuse(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q6 – Receptores centralizadores** (`question6_centralizers`):
   - **Metodología:** resume `reports["transaccion"][timeframe]` por mes y receptor (`receptor-user_id`), calculando el `inflow` total, emisores únicos, número de transacciones y riesgo promedio (`risk_score`). Define una métrica de `centralidad = inflow * emisores_unicos`, ordena de mayor a menor por mes y genera explicaciones con esos indicadores.
   - **Parámetros clave:** `timeframe`.
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q6_centralizers
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q6_centralizers(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q7 – Personas con desbalance neto** (`question7_net_imbalance`):
   - **Metodología:** toma `reports["persona"][timeframe]`, asegura la presencia de `desbalance_persona_monto_neto`, calcula su valor absoluto para ordenar y conserva también los contadores de meses extremos enviando y recibiendo. Produce interpretabilidad destacando el desbalance monetario y los meses con comportamiento extremo.
   - **Parámetros clave:** `timeframe`.
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q7_net_imbalance
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plot_q7_net_imbalance(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ## CLI
 ```bash
