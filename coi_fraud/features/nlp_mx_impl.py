@@ -122,6 +122,7 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "aportación",
                 "cooperacion",
                 "cooperación",
+                "coperacion",
                 "alinearse",
                 "afloja",
                 "no te cierres",
@@ -421,8 +422,8 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "operacion oculta verde",
             ],
         },
-        "DEIXIS": {
-            "peso": 1.1,
+        "COORDINACION_REITERADA": {
+            "peso": 1.2,
             "palabras": [
                 "lo de ayer",
                 "lo de antier",
@@ -430,20 +431,42 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "como quedamos",
                 "igual que ayer",
                 "igual que antes",
-                "ya sabes",
-                "aquello",
-                "eso",
-                "lo pendiente",
                 "igual trato",
                 "lo de siempre",
                 "lo acostumbrado",
                 "misma jugada",
+                "mismo trato",
+                "lo pendiente de ayer",
             ],
-            "patrones": [],
+            "patrones": [
+                r"lo\s+de\s+(ayer|siempre|antes)",
+                r"(misma|mismo)\s+(jugada|trato)",
+            ],
             "seeds": [
                 "lo de ayer igual",
                 "como quedamos",
                 "misma jugada de siempre",
+            ],
+        },
+        "ALUSION_INDIRECTA": {
+            "peso": 1.0,
+            "palabras": [
+                "ya sabes",
+                "aquello",
+                "eso",
+                "lo pendiente",
+                "lo conversado",
+                "ya quedamos",
+                "lo hablado",
+                "el tema",
+            ],
+            "patrones": [
+                r"ya\s+sabes",
+                r"lo\s+pendiente",
+            ],
+            "seeds": [
+                "ya sabes que hacer",
+                "lo pendiente queda igual",
             ],
         },
         "EMOCIONAL": {
@@ -466,6 +489,9 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "idolo",
                 "heroina",
                 "heroína",
+                "gracias por tanto",
+                "gracias totales",
+                "agradezco mucho",
             ],
             "patrones": [],
             "seeds": [
@@ -497,6 +523,12 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "after office privado",
                 "cena romantica",
                 "vino en suite",
+                "tanga",
+                "tangas",
+                "lenceria",
+                "lencería",
+                "tus tangas",
+                "elefant",
             ],
             "patrones": [
                 r"(favor|salida|cita|encuentro).{0,10}(intim|privad|personal)",
@@ -511,6 +543,63 @@ def nlp_mx_etiquetar_transacciones_pro(
                 "cita privada para liberar la orden",
                 "trato especial por el contrato",
                 "noche juntos por adjudicacion",
+            ],
+        },
+        "AGASAJOS_SOCIALES": {
+            "peso": 2.0,
+            "palabras": [
+                "cerveza",
+                "chela",
+                "chelas",
+                "tragos",
+                "pomo",
+                "after",
+                "aftercito",
+                "fiesta",
+                "fiestecita",
+                "antro",
+                "karaoke",
+                "botella",
+                "tequila",
+                "mezcal",
+                "brindis",
+                "cena bar",
+                "tapas",
+            ],
+            "patrones": [
+                r"(after|fiesta|antro|karaoke)",
+                r"(botella|pomo|tragos?).{0,10}(vip|premium)?",
+            ],
+            "seeds": [
+                "fiesta con pomos para celebrar aprobacion",
+                "chelas despues de liberar contrato",
+                "after en el antro por la firma",
+            ],
+        },
+        "DETALLE_PERSONAL": {
+            "peso": 2.2,
+            "palabras": [
+                "regalo",
+                "regalito",
+                "detallito",
+                "detallazo",
+                "detallito especial",
+                "detalle personal",
+                "detalle para ti",
+                "te compras algo bonito",
+                "tecomprasalgobonito",
+                "tecomprasalgobonit",
+                "te compras algo bonit",
+                "reglo",
+            ],
+            "patrones": [
+                r"te\s*compras?\s*algo\s*bonit",
+                r"regal(?:o|ito)",
+            ],
+            "seeds": [
+                "te compras algo bonito por el apoyo",
+                "regalito especial por liberar contrato",
+                "detalle personal por tu ayuda",
             ],
         },
         "REGALOS_LUJO": {
@@ -717,14 +806,22 @@ def nlp_mx_etiquetar_transacciones_pro(
         "regalo despedida",
     }
 
+    raw_series = df[col_texto].fillna("").astype(str)
+    norm_series = raw_series.apply(norm_basic)
+    toks_series = norm_series.apply(tokens)
+
     vectorizer = None
     cat_centroids = {}
+    cat_centroids_matrix = None
+    fams_for_similarity: list[str] = []
+    embedding_expanded_terms: dict[str, set[str]] = {fam: set() for fam in LEX}
     if use_embeddings:
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
 
-            docs: list[str] = []
+            lexical_docs: list[str] = []
             y: list[str] = []
+            base_terms_per_fam: dict[str, set[str]] = {fam: set() for fam in LEX}
             augmentation_contexts = [
                 "licitacion urgente",
                 "proveedor favorito",
@@ -742,37 +839,97 @@ def nlp_mx_etiquetar_transacciones_pro(
                 for s in spec.get("seeds", []):
                     base = norm_basic(s)
                     if base and base not in seen_terms:
-                        docs.append(base)
+                        lexical_docs.append(base)
                         y.append(fam)
                         seen_terms.add(base)
+                        base_terms_per_fam[fam].add(base)
                     for ctx in augmentation_contexts:
                         combo = norm_basic(f"{s} {ctx}")
                         if combo and combo not in seen_terms:
-                            docs.append(combo)
+                            lexical_docs.append(combo)
                             y.append(fam)
                             seen_terms.add(combo)
                 for w in spec.get("palabras", []):
                     base = norm_basic(w)
                     if base and base not in seen_terms:
-                        docs.append(base)
+                        lexical_docs.append(base)
                         y.append(fam)
                         seen_terms.add(base)
+                        base_terms_per_fam[fam].add(base)
                     if " " not in w:
                         doubled = norm_basic(f"{w} urgente")
                         if doubled and doubled not in seen_terms:
-                            docs.append(doubled)
+                            lexical_docs.append(doubled)
                             y.append(fam)
                             seen_terms.add(doubled)
             vectorizer = TfidfVectorizer(analyzer="char", ngram_range=(3, 5), min_df=1)
-            X = vectorizer.fit_transform(docs)
+            extra_docs: list[str] = []
+            seen_extra: set[str] = set()
+            unique_norm_texts = list(dict.fromkeys(norm_series.tolist()))
+            for text in unique_norm_texts:
+                if not text or text in seen_extra:
+                    continue
+                extra_docs.append(text)
+                seen_extra.add(text)
+                if len(extra_docs) >= 4000:
+                    break
+            fit_corpus = lexical_docs + extra_docs
+            if not fit_corpus:
+                raise ValueError("No hay corpus para inicializar embeddings.")
+            vectorizer.fit(fit_corpus)
+            X = vectorizer.transform(lexical_docs)
             fam_to: dict[str, list] = {}
             for fam, row in zip(y, X):
                 fam_to.setdefault(fam, []).append(row)
             for fam, mats in fam_to.items():
                 cat_centroids[fam] = mats[0] if len(mats) == 1 else sum(mats) / len(mats)
+            if cat_centroids:
+                from scipy.sparse import vstack
+
+                fams_for_similarity = list(cat_centroids.keys())
+                cat_centroids_matrix = vstack([cat_centroids[f] for f in fams_for_similarity])
+
+                candidate_segments: list[str] = []
+                seen_segments: set[str] = set()
+                MAX_SEGMENTS = 12000
+                for text in unique_norm_texts:
+                    if len(candidate_segments) >= MAX_SEGMENTS:
+                        break
+                    words = [w for w in text.split() if len(w) >= 3]
+                    if not words:
+                        continue
+                    for size in (1, 2, 3):
+                        if len(words) < size:
+                            continue
+                        for idx in range(len(words) - size + 1):
+                            segment = " ".join(words[idx : idx + size])
+                            if len(segment) < 4 or segment in seen_segments:
+                                continue
+                            seen_segments.add(segment)
+                            candidate_segments.append(segment)
+                            if len(candidate_segments) >= MAX_SEGMENTS:
+                                break
+                        if len(candidate_segments) >= MAX_SEGMENTS:
+                            break
+                if candidate_segments:
+                    from sklearn.metrics.pairwise import cosine_similarity
+
+                    X_candidates = vectorizer.transform(candidate_segments)
+                    if X_candidates.nnz:
+                        sims_segments = cosine_similarity(X_candidates, cat_centroids_matrix)
+                        for seg_idx, sims_row in enumerate(sims_segments):
+                            for fam_idx, sim in enumerate(sims_row):
+                                if sim >= 0.32:
+                                    fam = fams_for_similarity[fam_idx]
+                                    seg = candidate_segments[seg_idx]
+                                    if seg not in base_terms_per_fam[fam]:
+                                        embedding_expanded_terms[fam].add(seg)
         except Exception:
             vectorizer = None
             cat_centroids = {}
+            cat_centroids_matrix = None
+            fams_for_similarity = []
+            embedding_expanded_terms = {fam: set() for fam in LEX}
 
     def vaguedad(tokens_list):
         VAG_TERMS = {
@@ -884,6 +1041,7 @@ def nlp_mx_etiquetar_transacciones_pro(
         social_hit = any(w in norm_text for w in SOCIAL_WHITELIST)
         for fam, spec in LEX.items():
             fam_hits = []
+            embed_bonus = 0.0
             for w in spec.get("palabras", []):
                 nw = norm_basic(w)
                 if " " in nw:
@@ -894,6 +1052,13 @@ def nlp_mx_etiquetar_transacciones_pro(
                         fam_hits.append(w)
                     elif fuzzy_contains(norm_text, nw, 0.9):
                         fam_hits.append(w)
+            emb_hits = []
+            for emb in embedding_expanded_terms.get(fam, ()):  # términos sugeridos por embeddings
+                if emb in norm_text or fuzzy_contains(norm_text, emb, 0.92):
+                    emb_hits.append(emb)
+            if emb_hits:
+                fam_hits.extend(f"emb:{emb}" for emb in emb_hits)
+                embed_bonus = spec["peso"] * (0.45 if len(emb_hits) == 1 else 0.7)
             for pat in spec.get("patrones", []):
                 try:
                     rx = re.compile(pat)
@@ -907,7 +1072,7 @@ def nlp_mx_etiquetar_transacciones_pro(
             if fam_hits:
                 categorias.append(fam)
                 frases.extend(fam_hits)
-                contrib[fam] = contrib.get(fam, 0.0) + spec["peso"]
+                contrib[fam] = contrib.get(fam, 0.0) + spec["peso"] + embed_bonus
         if "OFUSCACION" in contrib and evento_presente:
             contrib["OFUSCACION"] += 1.2
             frases.append("ofuscacion+evento")
@@ -925,25 +1090,17 @@ def nlp_mx_etiquetar_transacciones_pro(
             return "MEDIO"
         return "BAJO"
 
-    raw_series = df[col_texto].fillna("")
-    norm_series = raw_series.apply(norm_basic)
-    toks_series = norm_series.apply(tokens)
-
     sims_per_row = [None] * len(df)
-    if vectorizer is not None:
+    if vectorizer is not None and cat_centroids_matrix is not None and fams_for_similarity:
         from sklearn.metrics.pairwise import cosine_similarity
-        from scipy.sparse import vstack
 
         Xq = vectorizer.transform(norm_series.tolist())
-        fams = list(cat_centroids.keys())
-        if fams:
-            C = vstack([cat_centroids[f] for f in fams])
-            S = cosine_similarity(Xq, C)
-            for i in range(len(df)):
-                row = {fams[j]: float(S[i, j]) for j in range(len(fams))}
-                sims_per_row[i] = dict(
-                    sorted(row.items(), key=lambda kv: kv[1], reverse=True)[:return_similitudes_top]
-                )
+        S = cosine_similarity(Xq, cat_centroids_matrix)
+        for i in range(len(df)):
+            row = {fams_for_similarity[j]: float(S[i, j]) for j in range(len(fams_for_similarity))}
+            sims_per_row[i] = dict(
+                sorted(row.items(), key=lambda kv: kv[1], reverse=True)[:return_similitudes_top]
+            )
 
     conceptos = []
     niveles = []
@@ -991,9 +1148,9 @@ def nlp_mx_etiquetar_transacciones_pro(
         if emo > 0:
             score += 0.3
             frases.append("emoji")
-        if "DEIXIS" in cats and len(cats) > 1:
+        if any(c in {"COORDINACION_REITERADA", "ALUSION_INDIRECTA"} for c in cats) and len(cats) > 1:
             score += 0.6
-            frases.append("deixis+otra")
+            frases.append("coordinacion_vaga")
         if has_rel:
             r = str(df[col_relacion].iat[i]).lower()
             if "manager" in r and any(
@@ -1009,6 +1166,8 @@ def nlp_mx_etiquetar_transacciones_pro(
                     "COI_RELACIONAL",
                     "FAVORES_SEXUALES",
                     "REGALOS_LUJO",
+                    "AGASAJOS_SOCIALES",
+                    "DETALLE_PERSONAL",
                     "CONFLICTO_INTERES_FAMILIAR",
                     "FACTURACION_SIMULADA",
                     "CONSULTORIA_FANTASMA",
@@ -1034,7 +1193,10 @@ def nlp_mx_etiquetar_transacciones_pro(
             sims_all.append(sims_per_row[i])
         else:
             sims_all.append({})
-        if cats and all(c in {"DINERO_SLANG", "EMOCIONAL", "DEIXIS"} for c in cats):
+        if cats and all(
+            c in {"DINERO_SLANG", "EMOCIONAL", "COORDINACION_REITERADA", "ALUSION_INDIRECTA"}
+            for c in cats
+        ):
             score = min(score, 2.0)
         fam_top = max(contrib.items(), key=lambda kv: kv[1])[0] if contrib else "NINGUNO"
         concepto = "" if fam_top == "NINGUNO" else fam_top

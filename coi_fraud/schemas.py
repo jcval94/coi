@@ -80,6 +80,7 @@ TX_COLS_EXPORT = [
     "feat_pair_month_count_ratio",
     "feat_pair_months_since_prev",
     "nlp_concepto_sospechoso",
+    "nlp_concepto_crudo",
     "feat_nlp_risk_points",
     "feat_nlp_vaguedad",
     "feat_nlp_emocion",
