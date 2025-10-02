@@ -17,6 +17,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - guard para entornos sin
 from coi_fraud import generate_diverse_dataset, run_pipeline
 from coi_fraud.schemas import (
     COL_AMOUNT,
+    COL_DESCRIPTION,
     COL_RECEIVER_ID,
     COL_RELATION,
     COL_SENDER_ID,
@@ -2234,6 +2235,471 @@ def question14_recurrent_payroll(
     return filtered.reindex(columns=columns)
 
 
+def question15_coordinated_cluster_signals(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 10
+) -> pd.DataFrame:
+    clusters = _get_section(reports, "clusters_personas", timeframe)
+    signal_cols = {
+        "yo_yo_cluster_tasa_flag": "yo-yo",
+        "smurf_cluster_tasa_flag": "smurf",
+        "red_cluster_tasa_en_ciclos": "ciclos",
+        "quid_cluster_tasa_flag": "quid",
+        "referencia_cluster_tasa_reutilizada": "referencia reutilizada",
+    }
+    base_columns = [
+        "cluster_id",
+        "cluster_personas",
+        "cluster_personas_total",
+        "cluster_tx_count",
+        "cluster_tx_sum",
+        "riesgo_cluster_maximo",
+        "desbalance_cluster_persona_principal",
+        "desbalance_cluster_persona_principal_monto",
+    ] + list(signal_cols.keys())
+
+    columns = [
+        "timeframe",
+        "cluster_id",
+        "personas_en_cluster",
+        "cluster_personas_total",
+        "cluster_tx_count",
+        "cluster_tx_sum",
+        "riesgo_cluster_maximo",
+        "signals_activas",
+    ] + list(signal_cols.keys()) + [
+        "persona_mas_desbalanceada",
+        "monto_neto_desbalance",
+        "interpretabilidad",
+    ]
+
+    if clusters.empty or not set(base_columns).issubset(clusters.columns):
+        fallback = {
+            "timeframe": timeframe,
+            "cluster_id": "sin_datos",
+            "personas_en_cluster": "sin_personas",
+            "cluster_personas_total": 0,
+            "cluster_tx_count": 0,
+            "cluster_tx_sum": 0.0,
+            "riesgo_cluster_maximo": 0.0,
+            "signals_activas": 0,
+            "persona_mas_desbalanceada": "sin_persona",
+            "monto_neto_desbalance": 0.0,
+            "interpretabilidad": (
+                "No se identificaron clusters relevantes en la ventana "
+                f"'{timeframe}', por lo que no hay señales coordinadas que resumir."
+            ),
+        }
+        for col in signal_cols:
+            fallback[col] = 0.0
+        return pd.DataFrame([fallback]).reindex(columns=columns)
+
+    work = clusters.copy()
+    work["timeframe"] = timeframe
+    for col in signal_cols:
+        if col not in work:
+            work[col] = 0.0
+        work[col] = work[col].fillna(0.0).astype(float)
+
+    work["cluster_personas_total"] = work["cluster_personas_total"].fillna(0).astype(int)
+    work["cluster_tx_count"] = work["cluster_tx_count"].fillna(0).astype(int)
+    work["cluster_tx_sum"] = work["cluster_tx_sum"].fillna(0.0).astype(float)
+    work["riesgo_cluster_maximo"] = work["riesgo_cluster_maximo"].fillna(0.0).astype(float)
+    work["desbalance_cluster_persona_principal_monto"] = (
+        work.get("desbalance_cluster_persona_principal_monto", 0.0).fillna(0.0).astype(float)
+    )
+    work["desbalance_cluster_persona_principal"] = (
+        work.get("desbalance_cluster_persona_principal", "sin_persona")
+        .fillna("sin_persona")
+        .astype(str)
+    )
+    work["signals_activas"] = work[list(signal_cols.keys())].gt(0.0).sum(axis=1)
+    work["signals_score"] = work[list(signal_cols.keys())].sum(axis=1)
+
+    def _summarize_personas(value: Any) -> str:
+        if isinstance(value, (list, tuple)):
+            personas = [str(v) for v in value if str(v).strip()]
+            if not personas:
+                return "sin_personas"
+            if len(personas) <= 4:
+                return ", ".join(personas)
+            return ", ".join(personas[:3]) + f" y {len(personas) - 3} más"
+        if pd.isna(value):
+            return "sin_personas"
+        text = str(value).strip()
+        return text if text else "sin_personas"
+
+    work["personas_en_cluster"] = work["cluster_personas"].apply(_summarize_personas)
+
+    def _signals_text(row: pd.Series) -> str:
+        active = [
+            f"{label}: {row.get(col, 0.0) * 100:.1f}%"
+            for col, label in signal_cols.items()
+            if row.get(col, 0.0) > 0
+        ]
+        if not active:
+            return "sin señales priorizadas activas"
+        return "; ".join(active)
+
+    work["signals_detalle"] = work.apply(_signals_text, axis=1)
+
+    def _balance_text(row: pd.Series) -> str:
+        persona = row.get("desbalance_cluster_persona_principal", "sin_persona")
+        monto = float(row.get("desbalance_cluster_persona_principal_monto", 0.0))
+        if persona == "sin_persona":
+            return "no se identificó una persona predominante"
+        tendencia = "neto emisor" if monto > 0 else "neto receptor" if monto < 0 else "sin ventaja neta"
+        return (
+            f"{persona} concentra {_format_float(abs(monto))} como {tendencia}"
+            if monto != 0
+            else f"{persona} sin desequilibrio monetario neto"
+        )
+
+    work["persona_mas_desbalanceada"] = work["desbalance_cluster_persona_principal"]
+    work["monto_neto_desbalance"] = work["desbalance_cluster_persona_principal_monto"]
+
+    work = work.sort_values(
+        ["signals_activas", "signals_score", "riesgo_cluster_maximo", "cluster_tx_sum"],
+        ascending=[False, False, False, False],
+    ).head(max(1, int(top_n)))
+
+    work["interpretabilidad"] = work.apply(
+        lambda row: (
+            f"En '{timeframe}', el {row.get('cluster_id', 'cluster_sin_id')} reúne "
+            f"{int(row.get('cluster_personas_total', 0))} personas ({row.get('personas_en_cluster', 'sin_personas')}) "
+            f"con {int(row.get('cluster_tx_count', 0))} transacciones que suman "
+            f"{_format_float(row.get('cluster_tx_sum', 0))} y riesgo máximo "
+            f"{row.get('riesgo_cluster_maximo', 0):.2f}. Se activan "
+            f"{int(row.get('signals_activas', 0))} de las 5 señales priorizadas ({row.get('signals_detalle', 'sin detalle')}). "
+            f"La persona más desbalanceada {_balance_text(row)}."
+        ),
+        axis=1,
+    )
+
+    return work.reindex(columns=columns)
+
+
+def question16_multisignal_transactions(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 25
+) -> pd.DataFrame:
+    tx = _get_section(reports, "transaccion", timeframe)
+    signal_cols = {
+        "flag_jerarquia": "jerarquía",
+        "sig_yoyo": "yo-yo",
+        "sig_smurf": "smurf",
+        "sig_near_thr": "near-threshold",
+        "sig_quid_pro_quo": "quid",
+        "sig_pair_change_point": "cambio brusco",
+    }
+
+    columns = [
+        "timeframe",
+        "fecha_hora_ts",
+        "emisor",
+        "receptor",
+        "movement_amount",
+        "risk_score",
+        "risk_tier",
+        "signals_activas",
+        "signals_detalle",
+        "umbral_senales_seleccion",
+    ] + list(signal_cols.keys()) + ["interpretabilidad"]
+
+    if tx.empty:
+        fallback = {
+            "timeframe": timeframe,
+            "fecha_hora_ts": "sin_fecha",
+            "emisor": "sin_emisor",
+            "receptor": "sin_receptor",
+            "movement_amount": 0.0,
+            "risk_score": 0.0,
+            "risk_tier": "SIN_TIERRA",
+            "signals_activas": 0,
+            "signals_detalle": "sin señales",
+            "interpretabilidad": (
+                "No se detectaron transacciones con múltiples señales simultáneas en la ventana "
+                f"'{timeframe}'."
+            ),
+        }
+        for col in signal_cols:
+            fallback[col] = 0
+        return pd.DataFrame([fallback]).reindex(columns=columns)
+
+    work = tx.copy()
+    work["timeframe"] = timeframe
+    relation_series = _coalesce_text_column(work, COL_RELATION)
+    work["flag_jerarquia"] = relation_series.str.contains("manager", case=False, na=False)
+
+    for col in signal_cols:
+        if col not in work:
+            work[col] = 0
+        work[col] = work[col].fillna(0)
+
+    work["signals_activas"] = (
+        work[list(signal_cols.keys())]
+        .apply(lambda row: sum(bool(x) and x != "" and x != 0 for x in row), axis=1)
+        .astype(int)
+    )
+
+    def _active_signals(row: pd.Series) -> list[str]:
+        active = []
+        for col, label in signal_cols.items():
+            value = row.get(col, 0)
+            is_active = False
+            if isinstance(value, (int, float)):
+                is_active = value > 0
+            else:
+                is_active = bool(value)
+            if is_active:
+                active.append(label)
+        return active
+
+    work["signals_lista"] = work.apply(_active_signals, axis=1)
+    work["signals_detalle"] = work["signals_lista"].apply(
+        lambda items: ", ".join(items) if items else "sin señales"
+    )
+
+    work = work.sort_values(
+        ["signals_activas", "risk_score", "movement_amount"], ascending=[False, False, False]
+    )
+
+    filtered = pd.DataFrame()
+    threshold_used = 0
+    for threshold in (3, 2):
+        candidate = work.loc[work["signals_activas"] >= threshold].copy()
+        if not candidate.empty:
+            filtered = candidate.head(max(1, int(top_n))).copy()
+            threshold_used = threshold
+            break
+    if filtered.empty:
+        candidate = work.loc[work["signals_activas"] >= 1].copy()
+        if not candidate.empty:
+            filtered = candidate.head(max(1, int(top_n))).copy()
+            threshold_used = 1
+    if filtered.empty:
+        filtered = work.head(max(1, int(top_n))).copy()
+        threshold_used = 0
+
+    filtered = filtered.copy()
+    filtered.loc[:, "umbral_senales_seleccion"] = threshold_used
+
+    filtered.loc[:, "fecha_hora_ts"] = filtered.get("fecha_hora_ts")
+    filtered.loc[:, "emisor"] = filtered.get(COL_SENDER_ID, "").astype(str)
+    filtered.loc[:, "receptor"] = filtered.get(COL_RECEIVER_ID, "").astype(str)
+    filtered.loc[:, "movement_amount"] = filtered.get(COL_AMOUNT, 0.0).astype(float)
+    filtered.loc[:, "risk_score"] = filtered.get("risk_score", 0.0).astype(float)
+    risk_tier_series = filtered.get("risk_tier")
+    if risk_tier_series is not None:
+        filtered.loc[:, "risk_tier"] = (
+            risk_tier_series.astype("string").fillna("SIN_TIERRA").replace({"<NA>": "SIN_TIERRA"})
+        )
+    else:
+        filtered.loc[:, "risk_tier"] = "SIN_TIERRA"
+
+    descripcion_series = _coalesce_text_column(filtered, COL_DESCRIPTION)
+    relation_series = _coalesce_text_column(filtered, COL_RELATION)
+
+    def _nota_relajada(row: pd.Series) -> str:
+        threshold = row.get("umbral_senales_seleccion", 0)
+        if threshold >= 3:
+            return ""
+        if threshold == 2:
+            return " Ante la ausencia de operaciones con 3+ señales, se priorizan las que combinan al menos dos indicadores."
+        if threshold == 1:
+            return " No hubo transacciones con múltiples señales; se listan las de una señal simultánea con mayor riesgo."
+        return " No hubo transacciones con señales activas; se listan las de mayor riesgo como referencia."
+
+    filtered["interpretabilidad"] = filtered.apply(
+        lambda row: (
+            f"El {row.get('fecha_hora_ts', 'sin_fecha')} se registró una transacción de "
+            f"{_format_float(row.get('movement_amount', 0))} entre "
+            f"{row.get('emisor', 'sin_emisor')} y {row.get('receptor', 'sin_receptor')} con riesgo "
+            f"{row.get('risk_score', 0):.2f} ({row.get('risk_tier', 'SIN_TIERRA')}). "
+            f"Activa {int(row.get('signals_activas', 0))} señales simultáneas: "
+            f"{row.get('signals_detalle', 'sin señales')}. "
+            f"Relación declarada: {relation_series.get(row.name, 'sin_relacion')}. "
+            f"Descripción: {descripcion_series.get(row.name, 'sin_descripcion')}"
+            f"{_nota_relajada(row)}"
+        ),
+        axis=1,
+    )
+
+    return filtered.reindex(columns=columns)
+
+
+def question17_nlp_person_profiles(
+    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 15
+) -> pd.DataFrame:
+    personas = _get_section(reports, "persona", timeframe)
+    conceptos = _get_section(reports, "persona_concepto", timeframe)
+
+    required_cols = [
+        "persona",
+        "movements",
+        "nlp_persona_total_transacciones_sospechosas",
+        "nlp_persona_conceptos_sospechosos_unicos",
+        "nlp_persona_top_conceptos",
+        "risk_avg_person",
+        "sum_emit",
+        "sum_recv",
+    ]
+
+    columns = [
+        "timeframe",
+        "persona",
+        "movements",
+        "tx_sospechosas_nlp",
+        "conceptos_unicos",
+        "conceptos_unicos_por_tx",
+        "proporcion_sospechosa",
+        "risk_avg_person",
+        "sum_emit",
+        "sum_recv",
+        "net_flow",
+        "top_conceptos_display",
+        "conceptos_principales",
+        "concepto_predominante",
+        "interpretabilidad",
+    ]
+
+    if personas.empty or not set(required_cols).issubset(personas.columns):
+        fallback = {
+            "timeframe": timeframe,
+            "persona": "sin_persona",
+            "movements": 0,
+            "tx_sospechosas_nlp": 0,
+            "conceptos_unicos": 0,
+            "conceptos_unicos_por_tx": 0.0,
+            "proporcion_sospechosa": 0.0,
+            "risk_avg_person": 0.0,
+            "sum_emit": 0.0,
+            "sum_recv": 0.0,
+            "net_flow": 0.0,
+            "top_conceptos_display": "sin_top_conceptos",
+            "conceptos_principales": "sin_conceptos",
+            "concepto_predominante": "sin_concepto",
+            "interpretabilidad": (
+                "No se identificaron personas con señales NLP para priorizar en la ventana "
+                f"'{timeframe}'."
+            ),
+        }
+        return pd.DataFrame([fallback]).reindex(columns=columns)
+
+    personas = personas.copy()
+    personas["timeframe"] = timeframe
+    personas["movements"] = personas.get("movements", 0).fillna(0).astype(int)
+    personas["nlp_persona_total_transacciones_sospechosas"] = (
+        personas.get("nlp_persona_total_transacciones_sospechosas", 0)
+        .fillna(0)
+        .astype(int)
+    )
+    personas["nlp_persona_conceptos_sospechosos_unicos"] = (
+        personas.get("nlp_persona_conceptos_sospechosos_unicos", 0)
+        .fillna(0)
+        .astype(int)
+    )
+    personas["nlp_persona_top_conceptos"] = personas.get(
+        "nlp_persona_top_conceptos", [[] for _ in range(len(personas))]
+    ).apply(
+        lambda x: x
+        if isinstance(x, list)
+        else ([] if pd.isna(x) else [x])
+    )
+    personas["nlp_persona_top_conceptos"] = personas["nlp_persona_top_conceptos"].apply(
+        lambda items: [str(item) for item in items if str(item).strip()]
+    )
+    personas["risk_avg_person"] = personas.get("risk_avg_person", 0.0).fillna(0.0).astype(float)
+    personas["sum_emit"] = personas.get("sum_emit", 0.0).fillna(0.0).astype(float)
+    personas["sum_recv"] = personas.get("sum_recv", 0.0).fillna(0.0).astype(float)
+
+    personas["tx_sospechosas_nlp"] = personas["nlp_persona_total_transacciones_sospechosas"]
+    personas["conceptos_unicos"] = personas["nlp_persona_conceptos_sospechosos_unicos"]
+    personas["conceptos_unicos_por_tx"] = personas.apply(
+        lambda row: (
+            row["conceptos_unicos"] / row["tx_sospechosas_nlp"]
+            if row.get("tx_sospechosas_nlp", 0) else 0.0
+        ),
+        axis=1,
+    )
+    personas["proporcion_sospechosa"] = personas.apply(
+        lambda row: (
+            row["tx_sospechosas_nlp"] / row["movements"]
+            if row.get("movements", 0) else 0.0
+        ),
+        axis=1,
+    )
+    personas["net_flow"] = personas["sum_emit"] - personas["sum_recv"]
+
+    if not conceptos.empty and {"persona", "nlp_concepto_sospechoso"}.issubset(conceptos.columns):
+        conceptos = conceptos.copy()
+        conceptos["nlp_persona_concepto_tx_total"] = (
+            conceptos.get("nlp_persona_concepto_tx_total", 0).fillna(0).astype(int)
+        )
+        conceptos["nlp_persona_concepto_monto_total"] = (
+            conceptos.get("nlp_persona_concepto_monto_total", 0.0).fillna(0.0).astype(float)
+        )
+        conceptos["nlp_persona_concepto_riesgo_promedio"] = (
+            conceptos.get("nlp_persona_concepto_riesgo_promedio", 0.0).fillna(0.0).astype(float)
+        )
+
+        conceptos = conceptos.sort_values(
+            ["persona", "nlp_persona_concepto_tx_total", "nlp_persona_concepto_riesgo_promedio"],
+            ascending=[True, False, False],
+        )
+
+        detalle_map: Dict[str, list[str]] = {}
+        for persona, group in conceptos.groupby("persona", observed=True):
+            top = group.head(3)
+            detalle_map[str(persona)] = [
+                (
+                    f"{_coalesce_str(row.get('nlp_concepto_sospechoso'), default='SIN_CONCEPTO')} "
+                    f"(tx={int(row.get('nlp_persona_concepto_tx_total', 0))}, "
+                    f"monto={_format_float(row.get('nlp_persona_concepto_monto_total', 0))}, "
+                    f"riesgo={row.get('nlp_persona_concepto_riesgo_promedio', 0):.2f})"
+                )
+                for _, row in top.iterrows()
+            ]
+        personas["conceptos_principales"] = personas["persona"].astype(str).map(detalle_map)
+    else:
+        personas["conceptos_principales"] = [[] for _ in range(len(personas))]
+
+    personas["conceptos_principales"] = personas["conceptos_principales"].apply(
+        lambda items: items if isinstance(items, list) else []
+    )
+    personas["conceptos_principales"] = personas["conceptos_principales"].apply(
+        lambda items: "; ".join(items) if items else "sin_conceptos_detallados"
+    )
+    personas["top_conceptos_display"] = personas["nlp_persona_top_conceptos"].apply(
+        lambda items: ", ".join(items) if items else "sin_top_conceptos"
+    )
+    personas["concepto_predominante"] = personas["nlp_persona_top_conceptos"].apply(
+        lambda items: items[0] if items else "sin_concepto"
+    )
+
+    personas = personas.sort_values(
+        ["tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
+        ascending=[False, False, False],
+    ).head(max(1, int(top_n)))
+
+    personas["interpretabilidad"] = personas.apply(
+        lambda row: (
+            f"En '{timeframe}', la persona {row.get('persona', 'sin_persona')} acumula "
+            f"{int(row.get('tx_sospechosas_nlp', 0))} transacciones NLP sospechosas "
+            f"sobre {int(row.get('movements', 0))} movimientos totales ({row.get('proporcion_sospechosa', 0):.0%}). "
+            f"Principales conceptos: {row.get('top_conceptos_display', 'sin_top_conceptos')} "
+            f"[{row.get('conceptos_principales', 'sin_conceptos_detallados')}]. "
+            f"Cada concepto cubre en promedio {row.get('conceptos_unicos_por_tx', 0):.2f} "
+            f"conceptos únicos por transacción sospechosa, con foco en "
+            f"{row.get('concepto_predominante', 'sin_concepto')}. Riesgo promedio "
+            f"{row.get('risk_avg_person', 0):.2f}. Flujo neto {_format_float(row.get('net_flow', 0))} "
+            f"(emitidos {_format_float(row.get('sum_emit', 0))} vs recibidos "
+            f"{_format_float(row.get('sum_recv', 0))})."
+        ),
+        axis=1,
+    )
+
+    return personas.reindex(columns=columns)
+
+
 def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]:
     return {
         "q1_manager_nlp": question1_manager_nlp(reports, timeframe),
@@ -2256,6 +2722,15 @@ def _run_questions(reports: Mapping[str, Any], timeframe: str) -> Dict[str, Any]
             reports, timeframe
         ),
         "q14_recurrent_payroll": question14_recurrent_payroll(reports, timeframe),
+        "q15_coordinated_cluster_signals": question15_coordinated_cluster_signals(
+            reports, timeframe
+        ),
+        "q16_multisignal_transactions": question16_multisignal_transactions(
+            reports, timeframe
+        ),
+        "q17_nlp_person_profiles": question17_nlp_person_profiles(
+            reports, timeframe
+        ),
     }
 
 

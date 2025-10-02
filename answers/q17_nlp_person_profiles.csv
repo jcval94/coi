@@ -1,0 +1,2 @@
+timeframe,persona,movements,tx_sospechosas_nlp,conceptos_unicos,conceptos_unicos_por_tx,proporcion_sospechosa,risk_avg_person,sum_emit,sum_recv,net_flow,top_conceptos_display,conceptos_principales,concepto_predominante,interpretabilidad
+todo_el_tiempo,sin_persona,0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,sin_top_conceptos,sin_conceptos,sin_concepto,No se identificaron personas con señales NLP para priorizar en la ventana 'todo_el_tiempo'.
