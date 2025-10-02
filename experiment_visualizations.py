@@ -25,6 +25,9 @@ from experiment_questions import (
     question12_smurfing_chronic,
     question13_bad_loans_with_frequency,
     question14_recurrent_payroll,
+    question15_coordinated_cluster_signals,
+    question16_multisignal_transactions,
+    question17_nlp_person_profiles,
 )
 
 
@@ -578,6 +581,215 @@ def plot_q14_recurrent_payroll(
     return axis
 
 
+def plot_q15_coordinated_cluster_signals(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 8,
+) -> Axes:
+    """Grafica los clusters con mayor número de señales coordinadas."""
+
+    data = question15_coordinated_cluster_signals(reports, timeframe, top_n=top_n)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+
+    cluster_series = data.get("cluster_id") if "cluster_id" in data else pd.Series(dtype=str)
+    if data.empty or (not cluster_series.empty and cluster_series.eq("sin_datos").all()):
+        return _empty_chart(
+            axis,
+            "Q15 – Clusters coordinados",
+            "Sin clusters con señales coordinadas en el periodo seleccionado.",
+        )
+
+    signal_cols = {
+        "yo_yo_cluster_tasa_flag": "Yo-Yo",
+        "smurf_cluster_tasa_flag": "Smurf",
+        "red_cluster_tasa_en_ciclos": "Ciclos",
+        "quid_cluster_tasa_flag": "Quid",
+        "referencia_cluster_tasa_reutilizada": "Referencia",
+    }
+
+    work = data.copy()
+    if "cluster_id" not in work:
+        work["cluster_id"] = "cluster_sin_id"
+    work["cluster_id"] = work["cluster_id"].fillna("cluster_sin_id").astype(str)
+    work = work.sort_values(
+        ["signals_activas", "riesgo_cluster_maximo", "cluster_tx_sum"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    heatmap_df = (
+        work.set_index("cluster_id")[list(signal_cols.keys())]
+        .fillna(0.0)
+        .astype(float)
+        .rename(columns=signal_cols)
+        * 100
+    )
+
+    sns.heatmap(
+        heatmap_df,
+        annot=True,
+        fmt=".0f",
+        cmap="OrRd",
+        ax=axis,
+        cbar_kws={"label": "% de transacciones con señal"},
+    )
+    axis.set_title(f"Q15 – Señales coordinadas por cluster ({timeframe})")
+    axis.set_xlabel("Señal priorizada")
+    axis.set_ylabel("Cluster de personas")
+    axis.set_xticklabels(axis.get_xticklabels(), rotation=45, ha="right")
+    return axis
+
+
+def plot_q16_multisignal_transactions(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 25,
+) -> Axes:
+    """Grafica las transacciones con mayor número de señales simultáneas."""
+
+    data = question16_multisignal_transactions(reports, timeframe, top_n=top_n)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+
+    if data.empty or data.get("signals_activas", pd.Series(dtype=int)).max() == 0:
+        return _empty_chart(
+            axis,
+            "Q16 – Transacciones multi-señal",
+            "Sin transacciones con múltiples señales en el periodo seleccionado.",
+        )
+
+    work = data.copy()
+    work["movement_amount"] = pd.to_numeric(work.get("movement_amount", 0.0), errors="coerce").fillna(0.0)
+    work["risk_score"] = pd.to_numeric(work.get("risk_score", 0.0), errors="coerce").fillna(0.0)
+    work["signals_activas"] = (
+        pd.to_numeric(work.get("signals_activas", 0), errors="coerce").fillna(0).astype(int)
+    )
+    if "flag_jerarquia" not in work:
+        work["flag_jerarquia"] = False
+    work["flag_jerarquia"] = work["flag_jerarquia"].fillna(False).astype(bool)
+    work["relacion_label"] = work["flag_jerarquia"].map({True: "Jerárquica", False: "No jerárquica"})
+    if COL_SENDER_ID not in work:
+        work[COL_SENDER_ID] = "sin_emisor"
+    if COL_RECEIVER_ID not in work:
+        work[COL_RECEIVER_ID] = "sin_receptor"
+    work["emisor"] = work[COL_SENDER_ID].fillna("sin_emisor").astype(str)
+    work["receptor"] = work[COL_RECEIVER_ID].fillna("sin_receptor").astype(str)
+    work["pair"] = work["emisor"] + "→" + work["receptor"]
+    work = work.sort_values(
+        ["signals_activas", "risk_score", "movement_amount"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    scatter = sns.scatterplot(
+        data=work,
+        x="movement_amount",
+        y="risk_score",
+        hue="signals_activas",
+        size="signals_activas",
+        style="relacion_label",
+        palette="viridis",
+        sizes=(60, 280),
+        legend="brief",
+        ax=axis,
+    )
+    for _, row in work.iterrows():
+        scatter.text(
+            row["movement_amount"],
+            row["risk_score"] + 0.02,
+            row.get("pair", "sin_par"),
+            fontsize=8,
+            ha="left",
+        )
+
+    axis.set_title(f"Q16 – Transacciones con múltiples señales ({timeframe})")
+    axis.set_xlabel("Monto transaccionado")
+    axis.set_ylabel("Riesgo (risk_score)")
+    axis.legend(title="Señales activas", loc="best")
+    return axis
+
+
+def plot_q17_nlp_person_profiles(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 15,
+) -> Axes:
+    """Grafica las personas con más señales NLP y su riesgo promedio."""
+
+    data = question17_nlp_person_profiles(reports, timeframe, top_n=top_n)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+
+    persona_series = data.get("persona") if "persona" in data else pd.Series(dtype=str)
+    if data.empty or (not persona_series.empty and persona_series.eq("sin_persona").all()):
+        return _empty_chart(
+            axis,
+            "Q17 – Perfiles NLP",
+            "Sin personas con conceptos NLP sospechosos en el periodo.",
+        )
+
+    work = data.copy()
+    if "persona" not in work:
+        work["persona"] = "sin_persona"
+    work["persona"] = work["persona"].fillna("sin_persona").astype(str)
+    work["tx_sospechosas_nlp"] = (
+        pd.to_numeric(work.get("tx_sospechosas_nlp", 0), errors="coerce").fillna(0).astype(int)
+    )
+    work["conceptos_unicos"] = (
+        pd.to_numeric(work.get("conceptos_unicos", 0), errors="coerce").fillna(0).astype(int)
+    )
+    work["risk_avg_person"] = (
+        pd.to_numeric(work.get("risk_avg_person", 0.0), errors="coerce").fillna(0.0).astype(float)
+    )
+    work["proporcion_sospechosa"] = (
+        pd.to_numeric(work.get("proporcion_sospechosa", 0.0), errors="coerce").fillna(0.0)
+    )
+    work["top_conceptos_display"] = (
+        work.get("top_conceptos_display", "sin_top_conceptos")
+        .fillna("sin_top_conceptos")
+        .astype(str)
+    )
+    work = work.sort_values(
+        ["tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    bins = [-float("inf"), 1.0, 2.0, 3.0, float("inf")]
+    labels = ["≤1.0", "1.0–2.0", "2.0–3.0", ">3.0"]
+    work["riesgo_categoria"] = pd.cut(
+        work["risk_avg_person"], bins=bins, labels=labels, include_lowest=True, right=False
+    )
+
+    scatter = sns.scatterplot(
+        data=work,
+        x="tx_sospechosas_nlp",
+        y="persona",
+        hue="riesgo_categoria",
+        size="conceptos_unicos",
+        palette="magma",
+        sizes=(60, 280),
+        legend="brief",
+        ax=axis,
+    )
+
+    for _, row in work.iterrows():
+        scatter.text(
+            row["tx_sospechosas_nlp"] + 0.1,
+            row["persona"],
+            f"{row.get('top_conceptos_display', 'sin_top_conceptos')} ({row.get('proporcion_sospechosa', 0):.0%})",
+            fontsize=8,
+            va="center",
+        )
+
+    axis.set_title(f"Q17 – Perfiles NLP sospechosos ({timeframe})")
+    axis.set_xlabel("Transacciones NLP sospechosas")
+    axis.set_ylabel("Persona")
+    axis.legend(title="Riesgo promedio")
+    return axis
+
+
 __all__ = [
     "plot_q1_manager_nlp",
     "plot_q2_manager_concepts",
@@ -593,4 +805,7 @@ __all__ = [
     "plot_q12_smurfing_chronic",
     "plot_q13_bad_loans_with_frequency",
     "plot_q14_recurrent_payroll",
+    "plot_q15_coordinated_cluster_signals",
+    "plot_q16_multisignal_transactions",
+    "plot_q17_nlp_person_profiles",
 ]

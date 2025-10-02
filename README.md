@@ -367,6 +367,69 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 
+- **Q15 – Clusters con señales coordinadas** (`question15_coordinated_cluster_signals`):
+  - **Metodología:** revisa `reports["clusters_personas"][timeframe]` y consolida las tasas de señales priorizadas (yo-yo, smurf, ciclos, quid y referencias reutilizadas). Normaliza conteos y montos para ordenar los clusters por número de señales activas, riesgo máximo y volumen total, generando un texto que resalta la persona más desbalanceada y el detalle porcentual de cada señal.
+  - **Parámetros clave:** `timeframe`; `top_n` (número máximo de clusters a devolver, 10 por defecto en la función base).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question15_coordinated_cluster_signals
+
+    q15 = question15_coordinated_cluster_signals(reports, timeframe="todo_el_tiempo", top_n=5)
+    print(q15[["cluster_id", "signals_activas", "interpretabilidad"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q15_coordinated_cluster_signals
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q15_coordinated_cluster_signals(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q16 – Transacciones con múltiples señales simultáneas** (`question16_multisignal_transactions`):
+  - **Metodología:** analiza `reports["transaccion"][timeframe]` buscando operaciones que acumulen varias banderas (jerarquía, yo-yo, smurf, near-threshold, quid y cambio brusco). Prioriza las que alcanzan al menos tres señales activas, relajando el umbral si no hay suficientes resultados, y redacta interpretabilidad con monto, riesgo, relación declarada y descripción.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de transacciones listadas, 25 por defecto).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question16_multisignal_transactions
+
+    q16 = question16_multisignal_transactions(reports, timeframe="todo_el_tiempo", top_n=10)
+    print(q16[["fecha_hora_ts", "emisor", "receptor", "signals_detalle"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q16_multisignal_transactions
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q16_multisignal_transactions(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
+- **Q17 – Perfiles NLP sospechosos por persona** (`question17_nlp_person_profiles`):
+  - **Metodología:** combina `reports["persona"][timeframe]` y `reports["persona_concepto"][timeframe]` para cuantificar transacciones NLP sospechosas, conceptos únicos y riesgo promedio por persona. Calcula proporciones respecto al total de movimientos, integra los principales conceptos detectados y evalúa el flujo neto para contextualizar el comportamiento descrito.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas priorizadas, 15 por defecto).
+  - **Ejemplo de uso:**
+    ```python
+    from experiment_questions import question17_nlp_person_profiles
+
+    q17 = question17_nlp_person_profiles(reports, timeframe="todo_el_tiempo", top_n=5)
+    print(q17[["persona", "tx_sospechosas_nlp", "top_conceptos_display"]].head())
+    ```
+  - **Visualización rápida:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_visualizations import plot_q17_nlp_person_profiles
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    plot_q17_nlp_person_profiles(reports, timeframe="todo_el_tiempo", ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
+
 ## CLI
 ```bash
 python -m coi_fraud --csv ./mis_transacciones.csv --out ./forensic_outputs
