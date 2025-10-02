@@ -14,6 +14,7 @@ from matplotlib.axes import Axes
 from coi_fraud.schemas import COL_RECEIVER_ID, COL_SENDER_ID
 from experiment_questions import (
     DEFAULT_TIMEFRAME,
+    QUESTION1_DIRECTIONS,
     QUESTION_METADATA,
     question1_manager_nlp,
     question2_manager_concepts,
@@ -91,9 +92,10 @@ def plot_q1_manager_nlp(
     *,
     ax: Optional[Axes] = None,
     top_n: int = 10,
+    direction: str = "manager_a_subordinado",
 ) -> Axes:
     """Grafica los pares manager-subordinado con conceptos NLP sospechosos."""
-    data = question1_manager_nlp(reports, timeframe)
+    data = question1_manager_nlp(reports, timeframe, direction=direction)
     axis = _ensure_axis(ax)
     if data.empty:
         return _render_empty_chart(
@@ -104,17 +106,31 @@ def plot_q1_manager_nlp(
         )
 
     work = data.copy()
-    work["pair"] = (
-        work["manager_user_id"].fillna("sin_manager").astype(str)
-        + "→"
-        + work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
-    )
+    if direction == "manager_a_subordinado":
+        arrow = "→"
+        y_label = "Manager → Subordinado"
+        left = work["manager_user_id"].fillna("sin_manager").astype(str)
+        right = work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
+    elif direction == "subordinado_a_manager":
+        arrow = "→"
+        y_label = "Subordinado → Manager"
+        left = work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
+        right = work["manager_user_id"].fillna("sin_manager").astype(str)
+    else:
+        valid = "', '".join(QUESTION1_DIRECTIONS)
+        raise ValueError(
+            "direction debe ser uno de '{valid}', se recibió '{direction}'".format(
+                valid=valid, direction=direction
+            )
+        )
+
+    work["pair"] = left + arrow + right
     work = work.sort_values(["tx_count", "monto_total"], ascending=[False, False]).head(top_n)
 
     sns.barplot(data=work, x="tx_count", y="pair", hue="nlp_concepto_sospechoso", ax=axis)
     _apply_plot_metadata(axis, "q1_manager_nlp", timeframe)
     axis.set_xlabel("Número de transacciones")
-    axis.set_ylabel("Manager → Subordinado")
+    axis.set_ylabel(y_label)
     axis.legend(title="Concepto")
     return axis
 
