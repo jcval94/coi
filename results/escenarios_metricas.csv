@@ -1,0 +1,53 @@
+escenario,titulo,ventana,duracion_segundos,filas
+pipeline,Ejecución de pipeline,-,31.756680898999548,1000
+q1_manager_nlp,Q1 – Manager con conceptos NLP sospechosos,ultimo_mes,0.004626087000360712,0
+q2_manager_concepts,Q2 – Conceptos NLP con mayor severidad,ultimo_mes,0.004151792000811838,0
+q3_quid_pairs,Q3 – Pares con rasgos Quid Pro Quo,ultimo_mes,0.026556957000138937,20
+q4_quid_negative_value_vs_load,Q4 – Autorizaciones con valor negativo vs. carga,ultimo_mes,0.0059026259996244335,10
+q5_reference_reuse,Q5 – Reutilización de referencias de pago,ultimo_mes,0.02314671600015572,0
+q6_centralizers,Q6 – Receptores centralizadores,ultimo_mes,0.007145939999645634,11
+q7_net_imbalance,Q7 – Personas con desbalance neto,ultimo_mes,0.002460783999595151,22
+q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,ultimo_mes,0.0014902449993314804,0
+q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,ultimo_mes,0.009835880000537145,1
+q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,ultimo_mes,0.029545387999860395,0
+q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,ultimo_mes,0.01617404499938857,2
+q12_smurfing_chronic,Q12 – Smurfing crónico,ultimo_mes,0.04363098799967702,11
+q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,ultimo_mes,0.034788182999363926,11
+q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,ultimo_mes,0.010172735000196553,11
+q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,ultimo_mes,0.007709935999628215,10
+q16_multisignal_transactions,Q16 – Transacciones con múltiples señales simultáneas,ultimo_mes,0.01335758699951839,1
+q17_nlp_person_profiles,Q17 – Perfiles NLP sospechosos por persona,ultimo_mes,0.0009439249997740262,1
+q1_manager_nlp,Q1 – Manager con conceptos NLP sospechosos,ultimos_3_meses,0.0038890730002094642,0
+q2_manager_concepts,Q2 – Conceptos NLP con mayor severidad,ultimos_3_meses,0.003685696000502503,0
+q3_quid_pairs,Q3 – Pares con rasgos Quid Pro Quo,ultimos_3_meses,0.02315040100074839,20
+q4_quid_negative_value_vs_load,Q4 – Autorizaciones con valor negativo vs. carga,ultimos_3_meses,0.005569109000134631,10
+q5_reference_reuse,Q5 – Reutilización de referencias de pago,ultimos_3_meses,0.023203481999189535,0
+q6_centralizers,Q6 – Receptores centralizadores,ultimos_3_meses,0.008141705999150872,28
+q7_net_imbalance,Q7 – Personas con desbalance neto,ultimos_3_meses,0.003139749999718333,53
+q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,ultimos_3_meses,0.0016265280000880011,0
+q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,ultimos_3_meses,0.010383410999565967,1
+q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,ultimos_3_meses,0.05707146499935334,0
+q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,ultimos_3_meses,0.016450864999569603,5
+q12_smurfing_chronic,Q12 – Smurfing crónico,ultimos_3_meses,0.07392576800066308,25
+q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,ultimos_3_meses,0.06621325700052694,28
+q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,ultimos_3_meses,0.010452544999679958,25
+q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,ultimos_3_meses,0.00795935600035591,10
+q16_multisignal_transactions,Q16 – Transacciones con múltiples señales simultáneas,ultimos_3_meses,0.013502716999937547,1
+q17_nlp_person_profiles,Q17 – Perfiles NLP sospechosos por persona,ultimos_3_meses,0.0009595259998604888,1
+q1_manager_nlp,Q1 – Manager con conceptos NLP sospechosos,todo_el_tiempo,0.004750553000121727,0
+q2_manager_concepts,Q2 – Conceptos NLP con mayor severidad,todo_el_tiempo,0.003934968000066874,0
+q3_quid_pairs,Q3 – Pares con rasgos Quid Pro Quo,todo_el_tiempo,0.061987174000023515,20
+q4_quid_negative_value_vs_load,Q4 – Autorizaciones con valor negativo vs. carga,todo_el_tiempo,0.006504884999230853,10
+q5_reference_reuse,Q5 – Reutilización de referencias de pago,todo_el_tiempo,0.05787411900018924,10
+q6_centralizers,Q6 – Receptores centralizadores,todo_el_tiempo,0.025602915999115794,983
+q7_net_imbalance,Q7 – Personas con desbalance neto,todo_el_tiempo,0.0060912319995622966,320
+q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,todo_el_tiempo,0.0023774129995217663,1
+q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,todo_el_tiempo,0.002302798000528128,1
+q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,todo_el_tiempo,2.484734136000043,1
+q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,todo_el_tiempo,0.015251202999934321,5
+q12_smurfing_chronic,Q12 – Smurfing crónico,todo_el_tiempo,2.112431492999349,25
+q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,todo_el_tiempo,1.867980222999904,50
+q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,todo_el_tiempo,0.014307587999610405,25
+q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,todo_el_tiempo,0.008063648000643298,1
+q16_multisignal_transactions,Q16 – Transacciones con múltiples señales simultáneas,todo_el_tiempo,0.0391309619999447,11
+q17_nlp_person_profiles,Q17 – Perfiles NLP sospechosos por persona,todo_el_tiempo,0.0010811560005095089,1
