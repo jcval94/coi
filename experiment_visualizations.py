@@ -18,6 +18,13 @@ from experiment_questions import (
     question5_reference_reuse,
     question6_centralizers,
     question7_net_imbalance,
+    question8_case13_new_employees,
+    question9_case14_veterans_from_newcomers,
+    question10_yoyo_streaks,
+    question11_near_threshold_structuring,
+    question12_smurfing_chronic,
+    question13_bad_loans_with_frequency,
+    question14_recurrent_payroll,
 )
 
 
@@ -292,6 +299,285 @@ def plot_q7_net_imbalance(
     return axis
 
 
+def plot_q8_case13_new_employees(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica receptores nuevos con montos altos recibidos."""
+    data = question8_case13_new_employees(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q8 – Receptores nuevos",
+            "Sin receptores recientes con montos altos.",
+        )
+
+    work = data.copy()
+    work["persona"] = work["persona"].fillna("sin_persona").astype(str)
+    work = work.sort_values(
+        ["caso13_persona_tx_altos", "caso13_persona_monto_total"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="caso13_persona_monto_total",
+        y="persona",
+        hue="caso13_persona_tx_altos",
+        ax=axis,
+    )
+    axis.set_title(f"Q8 – Receptores nuevos con montos altos ({timeframe})")
+    axis.set_xlabel("Monto total recibido")
+    axis.set_ylabel("Receptor")
+    axis.legend(title="Tx monto alto")
+    return axis
+
+
+def plot_q9_case14_veterans_from_newcomers(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica veteranos que reciben de emisores recientes."""
+    data = question9_case14_veterans_from_newcomers(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q9 – Veteranos desde nuevos",
+            "Sin veteranos recibiendo de emisores nuevos.",
+        )
+
+    work = data.copy()
+    work["persona"] = work["persona"].fillna("sin_persona").astype(str)
+    work = work.sort_values(
+        ["caso14_persona_tx_de_emisores_nuevos", "caso14_persona_monto_de_emisores_nuevos"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="caso14_persona_monto_de_emisores_nuevos",
+        y="persona",
+        hue="caso14_persona_emisores_nuevos_unicos",
+        ax=axis,
+    )
+    axis.set_title(f"Q9 – Veteranos receptores de nuevos ({timeframe})")
+    axis.set_xlabel("Monto recibido desde emisores nuevos")
+    axis.set_ylabel("Receptor veterano")
+    axis.legend(title="Emisores únicos")
+    return axis
+
+
+def plot_q10_yoyo_streaks(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica pares con mayores rachas Yo-Yo y riesgo."""
+    data = question10_yoyo_streaks(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q10 – Rachas Yo-Yo",
+            "Sin rachas Yo-Yo identificadas.",
+        )
+
+    work = data.copy()
+    work["par_bidir"] = work["par_bidir"].fillna("sin_par").astype(str)
+    work = work.sort_values(
+        ["racha_max_yo_yo", "riesgo_max_par", "tx_yo_yo_totales"],
+        ascending=[False, False, False],
+    ).head(top_n)
+    sns.scatterplot(
+        data=work,
+        x="racha_max_yo_yo",
+        y="riesgo_max_par",
+        size="tx_yo_yo_totales",
+        hue="meses_con_yo_yo",
+        ax=axis,
+    )
+    for _, row in work.iterrows():
+        axis.text(
+            row["racha_max_yo_yo"],
+            row["riesgo_max_par"],
+            row["par_bidir"],
+            fontsize=8,
+            ha="left",
+        )
+    axis.set_title(f"Q10 – Rachas Yo-Yo ({timeframe})")
+    axis.set_xlabel("Racha máxima Yo-Yo")
+    axis.set_ylabel("Riesgo máximo del par")
+    axis.legend(title="Meses Yo-Yo", loc="best")
+    return axis
+
+
+def plot_q11_near_threshold_structuring(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica pares con operaciones cerca de umbrales regulados."""
+    data = question11_near_threshold_structuring(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q11 – Cercanos a umbral",
+            "Sin montos cercanos a umbrales.",
+        )
+
+    work = data.copy()
+    work["pair"] = work["pair"].fillna("sin_par").astype(str)
+    work = work.sort_values(
+        ["meses_con_near", "monto_total_near"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="meses_con_near",
+        y="pair",
+        hue="riesgo_max",
+        ax=axis,
+    )
+    axis.set_title(f"Q11 – Montos pegados al umbral ({timeframe})")
+    axis.set_xlabel("Meses con montos cercanos")
+    axis.set_ylabel("Par emisor → receptor")
+    axis.legend(title="Riesgo máximo")
+    return axis
+
+
+def plot_q12_smurfing_chronic(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica pares con patrones crónicos de smurfing."""
+    data = question12_smurfing_chronic(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q12 – Smurfing crónico",
+            "Sin pares con smurfing prolongado.",
+        )
+
+    work = data.copy()
+    work["pair"] = work["pair"].fillna("sin_par").astype(str)
+    work = work.sort_values(
+        ["meses_con_smurf", "monto_smurf_total"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.scatterplot(
+        data=work,
+        x="meses_con_smurf",
+        y="monto_smurf_total",
+        size="tx_smurf_totales",
+        hue="riesgo_max",
+        ax=axis,
+    )
+    for _, row in work.iterrows():
+        axis.text(
+            row["meses_con_smurf"],
+            row["monto_smurf_total"],
+            row["pair"],
+            fontsize=8,
+            ha="left",
+        )
+    axis.set_title(f"Q12 – Smurfing crónico ({timeframe})")
+    axis.set_xlabel("Meses con smurfing")
+    axis.set_ylabel("Monto total smurf")
+    axis.legend(title="Riesgo máximo", loc="best")
+    return axis
+
+
+def plot_q13_bad_loans_with_frequency(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica pares con préstamos incobrables y alta frecuencia."""
+    data = question13_bad_loans_with_frequency(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q13 – Préstamos y frecuencia",
+            "Sin coincidencias de préstamos incobrables.",
+        )
+
+    work = data.copy()
+    work["pair"] = work["pair"].fillna("sin_par").astype(str)
+    work = work.sort_values(
+        ["meses_con_coincidencia", "monto_prestamos_incumplidos"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="monto_prestamos_incumplidos",
+        y="pair",
+        hue="eventos_alta_frecuencia",
+        ax=axis,
+    )
+    axis.set_title(f"Q13 – Préstamos incobrables frecuentes ({timeframe})")
+    axis.set_xlabel("Monto en préstamos incumplidos")
+    axis.set_ylabel("Par emisor → receptor")
+    axis.legend(title="Eventos alta frecuencia")
+    return axis
+
+
+def plot_q14_recurrent_payroll(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica pagos recurrentes tipo nómina."""
+    data = question14_recurrent_payroll(reports, timeframe)
+    axis = _ensure_axis(ax)
+    if data.empty:
+        return _empty_chart(
+            axis,
+            "Q14 – Pagos recurrentes",
+            "Sin patrones de nómina recurrente.",
+        )
+
+    work = data.copy()
+    work["emisor"] = work["emisor"].fillna("sin_emisor").astype(str)
+    work["receptor"] = work["receptor"].fillna("sin_receptor").astype(str)
+    work["pair"] = work["emisor"] + "→" + work["receptor"]
+    work = work.sort_values(
+        ["meses_recurrentes", "monto_total"],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="monto_total",
+        y="pair",
+        hue="meses_recurrentes",
+        ax=axis,
+    )
+    axis.set_title(f"Q14 – Pagos recurrentes tipo nómina ({timeframe})")
+    axis.set_xlabel("Monto total pagado")
+    axis.set_ylabel("Emisor → Receptor")
+    axis.legend(title="Meses recurrentes")
+    return axis
+
+
 __all__ = [
     "plot_q1_manager_nlp",
     "plot_q2_manager_concepts",
@@ -300,4 +586,11 @@ __all__ = [
     "plot_q5_reference_reuse",
     "plot_q6_centralizers",
     "plot_q7_net_imbalance",
+    "plot_q8_case13_new_employees",
+    "plot_q9_case14_veterans_from_newcomers",
+    "plot_q10_yoyo_streaks",
+    "plot_q11_near_threshold_structuring",
+    "plot_q12_smurfing_chronic",
+    "plot_q13_bad_loans_with_frequency",
+    "plot_q14_recurrent_payroll",
 ]
