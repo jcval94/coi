@@ -18,6 +18,9 @@ from experiment_questions import (
     question5_reference_reuse,
     question6_centralizers,
     question7_net_imbalance,
+    question15_coordinated_cluster_signals,
+    question16_multisignal_transactions,
+    question17_nlp_person_profiles,
 )
 
 
@@ -292,6 +295,149 @@ def plot_q7_net_imbalance(
     return axis
 
 
+def plot_q15_coordinated_cluster_signals(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 10,
+) -> Axes:
+    """Grafica clusters resaltando el número de señales coordinadas activas."""
+
+    data = question15_coordinated_cluster_signals(reports, timeframe)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+    if data.empty or "cluster_id" not in data:
+        return _empty_chart(
+            axis,
+            "Q15 – Señales coordinadas por cluster",
+            "Sin clusters relevantes para el periodo.",
+        )
+
+    work = data.copy()
+    if "signals_activas" not in work:
+        return _empty_chart(
+            axis,
+            "Q15 – Señales coordinadas por cluster",
+            "El resultado no incluye el total de señales activas.",
+        )
+
+    work["cluster_label"] = work["cluster_id"].fillna("cluster_sin_id").astype(str)
+    work = work.sort_values(
+        ["signals_activas", "riesgo_cluster_maximo", "cluster_tx_sum"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    sns.barplot(
+        data=work,
+        x="signals_activas",
+        y="cluster_label",
+        ax=axis,
+        palette="Blues_d",
+    )
+    axis.set_title(f"Q15 – Clusters con mayor coordinación ({timeframe})")
+    axis.set_xlabel("Número de señales priorizadas activas")
+    axis.set_ylabel("Cluster")
+
+    if hasattr(axis, "bar_label") and axis.containers:
+        axis.bar_label(
+            axis.containers[0],
+            labels=[f"riesgo máx {row:.2f}" for row in work["riesgo_cluster_maximo"]],
+            padding=6,
+        )
+
+    return axis
+
+
+def plot_q16_multisignal_transactions(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 20,
+) -> Axes:
+    """Grafica las transacciones con múltiples señales simultáneas."""
+
+    data = question16_multisignal_transactions(reports, timeframe)
+    axis = _ensure_axis(ax, figsize=(11, 7))
+    if data.empty or "risk_score" not in data:
+        return _empty_chart(
+            axis,
+            "Q16 – Transacciones multisignales",
+            "Sin transacciones destacadas para el periodo.",
+        )
+
+    work = data.copy()
+    if {"emisor", "receptor"}.issubset(work.columns):
+        work["tx_label"] = work.apply(
+            lambda row: (
+                f"{row.get('fecha_hora_ts', 'sin_fecha')} "
+                f"{row.get('emisor', 'sin_emisor')}→{row.get('receptor', 'sin_receptor')}"
+            ),
+            axis=1,
+        )
+    else:
+        work["tx_label"] = work.index.astype(str)
+
+    work = work.sort_values(
+        ["signals_activas", "risk_score", "movement_amount"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    sns.barplot(
+        data=work,
+        x="risk_score",
+        y="tx_label",
+        hue="signals_activas",
+        ax=axis,
+        palette="rocket",
+    )
+    axis.set_title(f"Q16 – Transacciones con señales simultáneas ({timeframe})")
+    axis.set_xlabel("risk_score")
+    axis.set_ylabel("Transacción (fecha emisor→receptor)")
+    axis.legend(title="Señales activas", bbox_to_anchor=(1.02, 1), loc="upper left")
+    return axis
+
+
+def plot_q17_nlp_person_profiles(
+    reports: dict,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    *,
+    ax: Optional[Axes] = None,
+    top_n: int = 15,
+) -> Axes:
+    """Grafica las personas con mayor concentración de transacciones sospechosas por NLP."""
+
+    data = question17_nlp_person_profiles(reports, timeframe)
+    axis = _ensure_axis(ax, figsize=(10, 6))
+    if data.empty or "tx_sospechosas_nlp" not in data:
+        return _empty_chart(
+            axis,
+            "Q17 – Personas NLP prioritarias",
+            "Sin personas con señales NLP para el periodo.",
+        )
+
+    work = data.copy()
+    work["persona"] = work["persona"].fillna("sin_persona").astype(str)
+    work = work.sort_values(
+        ["tx_sospechosas_nlp", "proporcion_sospechosa", "risk_avg_person"],
+        ascending=[False, False, False],
+    ).head(top_n)
+
+    sns.barplot(
+        data=work,
+        x="tx_sospechosas_nlp",
+        y="persona",
+        hue="conceptos_unicos",
+        ax=axis,
+        palette="mako",
+    )
+    axis.set_title(f"Q17 – Personas con más actividad NLP sospechosa ({timeframe})")
+    axis.set_xlabel("Transacciones NLP sospechosas")
+    axis.set_ylabel("Persona")
+    axis.legend(title="Conceptos únicos", bbox_to_anchor=(1.02, 1), loc="upper left")
+    return axis
+
+
 __all__ = [
     "plot_q1_manager_nlp",
     "plot_q2_manager_concepts",
@@ -300,4 +446,7 @@ __all__ = [
     "plot_q5_reference_reuse",
     "plot_q6_centralizers",
     "plot_q7_net_imbalance",
+    "plot_q15_coordinated_cluster_signals",
+    "plot_q16_multisignal_transactions",
+    "plot_q17_nlp_person_profiles",
 ]
