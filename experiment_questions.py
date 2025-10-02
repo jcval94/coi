@@ -1363,11 +1363,11 @@ def question9_case14_veterans_from_newcomers(
                     (base["user_antiguedad_anios"] <= young_q)
                     & (base["receptor_antiguedad_anios"] >= veteran_q)
                 ].copy()
-                if candidate.empty():
+                if candidate.empty:
                     candidate = base.nsmallest(100, "user_antiguedad_anios").copy()
                 selected = candidate
                 applied = (young_q, veteran_q)
-            if selected is None or selected.empty():
+            if selected is None or selected.empty:
                 return pd.DataFrame()
 
             grouped = (
