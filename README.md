@@ -176,14 +176,19 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
 
 - **Q1 – Manager con conceptos NLP sospechosos** (`question1_manager_nlp`):
   - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes, categoría detectada, manager y subordinado para resumir `tx_count` y `monto_total` y generar textos explicativos.
-  - **Parámetros clave:** `timeframe`; `categories` (lista de categorías NLP, por defecto las cinco anteriores).
+  - **Parámetros clave:** `timeframe`; `categories` (lista de categorías NLP, por defecto las cinco anteriores); `direction` (``"manager_a_subordinado"`` por defecto, o ``"subordinado_a_manager"`` para invertir el flujo analizado).
   - **Visualización rápida:**
     ```python
     import matplotlib.pyplot as plt
     from experiment_visualizations import plot_q1_manager_nlp
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    plot_q1_manager_nlp(reports, timeframe="todo_el_tiempo", ax=ax)
+    plot_q1_manager_nlp(
+        reports,
+        timeframe="todo_el_tiempo",
+        ax=ax,
+        direction="subordinado_a_manager",  # opcional: invierte el sentido
+    )
     plt.tight_layout()
     plt.show()
     ```

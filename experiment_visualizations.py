@@ -15,6 +15,7 @@ from coi_fraud.schemas import COL_RECEIVER_ID, COL_SENDER_ID
 from experiment_questions import (
     DEFAULT_TIMEFRAME,
     QUESTION_METADATA,
+    DirectionOption,
     question1_manager_nlp,
     question2_manager_concepts,
     question3_quid_pairs,
@@ -91,9 +92,10 @@ def plot_q1_manager_nlp(
     *,
     ax: Optional[Axes] = None,
     top_n: int = 10,
+    direction: DirectionOption = "manager_a_subordinado",
 ) -> Axes:
     """Grafica los pares manager-subordinado con conceptos NLP sospechosos."""
-    data = question1_manager_nlp(reports, timeframe)
+    data = question1_manager_nlp(reports, timeframe, direction=direction)
     axis = _ensure_axis(ax)
     if data.empty:
         return _render_empty_chart(
@@ -104,17 +106,26 @@ def plot_q1_manager_nlp(
         )
 
     work = data.copy()
-    work["pair"] = (
-        work["manager_user_id"].fillna("sin_manager").astype(str)
-        + "→"
-        + work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
-    )
+    if direction == "manager_a_subordinado":
+        work["pair"] = (
+            work["manager_user_id"].fillna("sin_manager").astype(str)
+            + "→"
+            + work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
+        )
+        ylabel = "Manager → Subordinado"
+    else:
+        work["pair"] = (
+            work["subordinado_user_id"].fillna("sin_subordinado").astype(str)
+            + "→"
+            + work["manager_user_id"].fillna("sin_manager").astype(str)
+        )
+        ylabel = "Subordinado → Manager"
     work = work.sort_values(["tx_count", "monto_total"], ascending=[False, False]).head(top_n)
 
     sns.barplot(data=work, x="tx_count", y="pair", hue="nlp_concepto_sospechoso", ax=axis)
     _apply_plot_metadata(axis, "q1_manager_nlp", timeframe)
     axis.set_xlabel("Número de transacciones")
-    axis.set_ylabel("Manager → Subordinado")
+    axis.set_ylabel(ylabel)
     axis.legend(title="Concepto")
     return axis
 
