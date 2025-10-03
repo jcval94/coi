@@ -175,7 +175,7 @@ dataset = generate_diverse_dataset()  # 6 000 filas por defecto
 El módulo `experiment_questions.py` genera respuestas tabulares para siete preguntas recurrentes a partir del diccionario de `reports` producido por `run_pipeline`. Todas las funciones aceptan `timeframe` (por defecto `"todo_el_tiempo"`) y devuelven columnas de interpretabilidad en español listando la lógica aplicada.
 
 - **Q1 – Manager con conceptos NLP sospechosos** (`question1_manager_nlp`):
-  - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes, categoría detectada, manager y subordinado para resumir `tx_count` y `monto_total` y generar textos explicativos.
+  - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes y par jerárquico, sumando `tx_count`, `monto_total` y recopilando en una lista todos los conceptos detectados para construir textos explicativos.
   - **Parámetros clave:** `timeframe`; `categories` (lista de categorías NLP, por defecto las cinco anteriores); `direction` (``"manager_a_subordinado"`` por defecto, o ``"subordinado_a_manager"`` para invertir el flujo).
   - **Visualización rápida:**
     ```python
@@ -187,6 +187,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.tight_layout()
     plt.show()
     ```
+    Para invertir rápidamente la dirección mostrada basta con indicar
+    `invert_direction=True` al invocar la función de visualización.
 
 - **Q2 – Conceptos NLP con mayor severidad** (`question2_manager_concepts`):
   - **Metodología:** reutiliza la detección de Q1 sobre `reports["transaccion"][timeframe]` y agrega por mes y categoría calculando número de transacciones y el cuantil 0.95 de `risk_score`, ordenando por severidad antes de redactar la explicación.
