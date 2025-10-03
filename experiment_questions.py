@@ -1094,340 +1094,145 @@ def question4_quid_negative_value_vs_load(
 def question5_reference_reuse(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, include_raw_concept: bool = False
 ) -> pd.DataFrame:
-    """Detecta reutilización sospechosa de referencias de pago en corto plazo.
+    """Detecta receptores que reciben el mismo concepto sospechoso desde múltiples emisores."""
 
-    Parameters
-    ----------
-    reports
-        Reportes agregados con secciones de casuística de referencias y
-        transacciones base.
-    timeframe
-        Ventana temporal seleccionada (``"todo_el_tiempo"`` por defecto).
-    include_raw_concept
-        Cuando es ``True`` agrega un análisis análogo de reutilización
-        usando conceptos crudos normalizados.
-
-    Metodología
-    -----------
-    1. Prioriza ``casuistica_referencia_resumen`` y ``casuistica_referencia_tx``
-       para identificar referencias compartidas por múltiples pares.
-    2. Ordena las referencias por número de pares, rango de días y cantidad de
-       transacciones, concentrándose en reutilización dentro de 30 días.
-    3. Si faltan los resúmenes, reconstruye la métrica desde ``transaccion`` y
-       normaliza la descripción para comparar equivalencias.
-    4. En ausencia de candidatos estrictos, activa un modo relajado que lista
-       las referencias más frecuentes.
-    5. Redacta interpretabilidad con detalles de pares y transacciones
-       involucrados.
-    6. Si ``include_raw_concept`` es ``True``, replica el análisis para los
-       conceptos crudos limpiados de ruido textual.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Tabla con referencias recurrentes, métricas temporales y explicaciones
-        en español.
-    """
-    summary = _get_section(reports, "casuistica_referencia_resumen", timeframe)
-    tx = _get_section(reports, "casuistica_referencia_tx", timeframe)
-    base_tx = _get_section(reports, "transaccion", timeframe)
-
-    summary_columns = [
-        "reference_norm",
-        "reference_len",
-        "first_ts",
-        "last_ts",
-        "days_range",
-        "n_pairs",
-        "pairs",
-        "tx_count",
-    ]
-
-    concept_summary_columns = [
-        "concepto_norm",
-        "concepto_crudo",
-        "concepto_len",
-        "first_ts",
-        "last_ts",
-        "days_range",
-        "n_pairs",
-        "pairs",
-        "tx_count",
-    ]
-
-    summary_relajado = False
-    concept_summary_relajado = False
-    concept_summary_df = pd.DataFrame(columns=concept_summary_columns)
-    if not summary.empty:
-        filtered = summary.loc[summary.get("n_pairs", 0) > 1].copy()
-        filtered = filtered.sort_values(
-            ["n_pairs", "days_range", "tx_count"], ascending=[False, True, False]
-        )
-        summary_df = filtered.reindex(columns=summary_columns)
-    else:
-        summary_df = pd.DataFrame(columns=summary_columns)
-        if not base_tx.empty and "feat_reference_norm" in base_tx:
-            base_refs = base_tx.copy()
-            base_refs["reference_norm"] = base_refs.get("feat_reference_norm", "").fillna("").astype(str)
-            if base_refs["reference_norm"].str.strip().eq("").all():
-                base_refs["reference_norm"] = (
-                    base_refs.get("descripcion", "")
-                    .fillna("")
-                    .astype(str)
-                    .str.lower()
-                    .str.replace(r"[^a-z0-9]+", " ", regex=True)
-                    .str.strip()
-                )
-            base_refs = base_refs.loc[base_refs["reference_norm"].str.len() > 0].copy()
-            if not base_refs.empty:
-                if "feat_reference_len" not in base_refs:
-                    base_refs["feat_reference_len"] = base_refs["reference_norm"].str.len()
-                base_refs["fecha_hora_ts"] = pd.to_datetime(
-                    base_refs.get("fecha_hora_ts"), errors="coerce"
-                )
-                base_refs["pair_id"] = (
-                    base_refs.get(COL_SENDER_ID, "").astype(str)
-                    + "->"
-                    + base_refs.get(COL_RECEIVER_ID, "").astype(str)
-                )
-                fallback_summary = (
-                    base_refs.groupby("reference_norm", observed=True)
-                    .agg(
-                        reference_len=("feat_reference_len", "max"),
-                        first_ts=("fecha_hora_ts", "min"),
-                        last_ts=("fecha_hora_ts", "max"),
-                        n_pairs=("pair_id", "nunique"),
-                        pairs=("pair_id", lambda s: "; ".join(sorted(set(map(str, s))))),
-                        tx_count=(COL_AMOUNT, "count"),
-                    )
-                    .reset_index()
-                )
-                if not fallback_summary.empty:
-                    fallback_summary["days_range"] = (
-                        fallback_summary["last_ts"] - fallback_summary["first_ts"]
-                    ).dt.days.fillna(0)
-                    fallback_summary = fallback_summary.loc[
-                        fallback_summary["n_pairs"] > 1
-                    ].copy()
-                    fallback_summary = fallback_summary.loc[
-                        fallback_summary["days_range"].fillna(0) <= 30
-                    ]
-                    fallback_summary["first_ts"] = fallback_summary["first_ts"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                    fallback_summary["last_ts"] = fallback_summary["last_ts"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                    summary_df = fallback_summary.reindex(columns=summary_columns)
-                    summary_relajado = False
-                if summary_df.empty:
-                    relaxed_summary = (
-                        base_refs.groupby("reference_norm", observed=True)
-                        .agg(
-                            reference_len=("feat_reference_len", "max"),
-                            first_ts=("fecha_hora_ts", "min"),
-                            last_ts=("fecha_hora_ts", "max"),
-                            n_pairs=("pair_id", "nunique"),
-                            pairs=("pair_id", lambda s: "; ".join(sorted(set(map(str, s))))),
-                            tx_count=(COL_AMOUNT, "count"),
-                        )
-                        .reset_index()
-                    )
-                    if not relaxed_summary.empty:
-                        relaxed_summary["days_range"] = (
-                            relaxed_summary["last_ts"] - relaxed_summary["first_ts"]
-                        ).dt.days.fillna(0)
-                        relaxed_summary = relaxed_summary.loc[relaxed_summary["tx_count"] > 1].copy()
-                        relaxed_summary["first_ts"] = relaxed_summary["first_ts"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                        relaxed_summary["last_ts"] = relaxed_summary["last_ts"].dt.strftime("%Y-%m-%d %H:%M:%S")
-                        relaxed_summary = relaxed_summary.sort_values(
-                            ["tx_count", "days_range"], ascending=[False, True]
-                        ).head(10)
-                        relaxed_summary["n_pairs"] = relaxed_summary["n_pairs"].fillna(1)
-                        summary_df = relaxed_summary.reindex(columns=summary_columns)
-                        summary_relajado = True
-
-    summary_df["nivel_respuesta"] = "referencia"
-    summary_df["timeframe"] = timeframe
-    if not summary_df.empty:
-        summary_df["interpretabilidad"] = summary_df.apply(
-            lambda row: (
-                f"La referencia normalizada '{_coalesce_str(row.get('reference_norm'), default='sin_referencia')}' se reutilizó en "
-                f"{int(row.get('n_pairs', 0))} pares dentro de {row.get('days_range', 0)} días, "
-                f"generando {int(row.get('tx_count', 0))} transacciones entre {row.get('first_ts', 'sin_fecha')} "
-                f"y {row.get('last_ts', 'sin_fecha')}."
-                + (
-                    " Se listan referencias recurrentes sin cumplir aún el criterio multi-par (modo relajado)."
-                    if summary_relajado
-                    else ""
-                )
-            ),
-            axis=1,
-        )
-    else:
-        summary_df["interpretabilidad"] = pd.Series(dtype="object")
-
-    tx_columns = [
-        "fecha_hora_ts",
-        COL_SENDER_ID,
-        COL_RECEIVER_ID,
-        "reference_number_trans_desc",
-        "feat_reference_norm",
-        "feat_reference_len",
-        "risk_score",
-    ]
-
-    concept_tx_columns = tx_columns + ["nlp_concepto_crudo", "concepto_norm"]
-    concept_tx_df = pd.DataFrame(columns=concept_tx_columns)
-
-    if not tx.empty:
-        involved_refs = summary_df["reference_norm"].dropna().unique().tolist()
-        filtered_tx = tx.loc[tx.get("feat_reference_norm", "").isin(involved_refs)].copy()
-    elif not base_tx.empty and "feat_reference_norm" in base_tx:
-        involved_refs = summary_df["reference_norm"].dropna().unique().tolist()
-        filtered_tx = base_tx.loc[base_tx.get("feat_reference_norm", "").isin(involved_refs)].copy()
-    else:
-        tx_df = pd.DataFrame(columns=tx_columns)
-
-    if 'filtered_tx' in locals() and not filtered_tx.empty:
-        filtered_tx = filtered_tx.sort_values(
-            ["feat_reference_norm", "fecha_hora_ts"], ascending=[True, True]
-        )
-        tx_df = filtered_tx.reindex(columns=tx_columns)
-    else:
-        tx_df = pd.DataFrame(columns=tx_columns)
-
-    tx_df["nivel_respuesta"] = "transaccion"
-    tx_df["timeframe"] = timeframe
-    if not tx_df.empty:
-        tx_df["interpretabilidad"] = tx_df.apply(
-            lambda row: (
-                f"La transacción del {row.get('fecha_hora_ts', 'sin_fecha')} reutilizó la referencia "
-                f"'{_coalesce_str(row.get('feat_reference_norm'), default='sin_referencia')}' entre "
-                f"{_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
-                f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')}, "
-                f"sugiriendo coordinación/ofuscación en la ventana '{timeframe}'."
-            ),
-            axis=1,
-        )
-    else:
-        tx_df["interpretabilidad"] = pd.Series(dtype="object")
-
-    if include_raw_concept and not base_tx.empty:
-        concept_source = _ensure_raw_concept_column(base_tx)
-        concept_source["nlp_concepto_crudo"] = concept_source["nlp_concepto_crudo"].fillna("").astype(str)
-        concept_source["concepto_norm"] = concept_source["nlp_concepto_crudo"].map(normalize_clean_concept)
-        concept_source = concept_source.loc[concept_source["concepto_norm"].str.len() > 0].copy()
-        if not concept_source.empty:
-            concept_source["pair_id"] = (
-                concept_source.get(COL_SENDER_ID, "").astype(str)
-                + "->"
-                + concept_source.get(COL_RECEIVER_ID, "").astype(str)
-            )
-            concept_source["fecha_hora_ts"] = pd.to_datetime(
-                concept_source.get("fecha_hora_ts"), errors="coerce"
-            )
-            concept_summary = (
-                concept_source.groupby("concepto_norm", observed=True)
-                .agg(
-                    concepto_crudo=("nlp_concepto_crudo", _most_common_text),
-                    concepto_len=("nlp_concepto_crudo", _max_text_length),
-                    first_ts=("fecha_hora_ts", "min"),
-                    last_ts=("fecha_hora_ts", "max"),
-                    n_pairs=("pair_id", "nunique"),
-                    pairs=("pair_id", lambda s: "; ".join(sorted(set(map(str, s))))),
-                    tx_count=(COL_AMOUNT, "count"),
-                )
-                .reset_index()
-            )
-            if not concept_summary.empty:
-                concept_summary["days_range"] = (
-                    concept_summary["last_ts"] - concept_summary["first_ts"]
-                ).dt.days.fillna(0)
-                strict_summary = concept_summary.loc[
-                    (concept_summary["n_pairs"] > 1)
-                    & (concept_summary["days_range"].fillna(0) <= 30)
-                ].copy()
-                if not strict_summary.empty:
-                    concept_summary_df = strict_summary
-                else:
-                    concept_summary_relajado = True
-                    concept_summary_df = concept_summary.sort_values(
-                        ["tx_count", "days_range"], ascending=[False, True]
-                    ).head(10)
-                if not concept_summary_df.empty:
-                    concept_summary_df["concepto_len"] = (
-                        concept_summary_df.get("concepto_len", 0).fillna(0).astype(int)
-                    )
-                    concept_summary_df["days_range"] = (
-                        concept_summary_df.get("days_range", 0).fillna(0).astype(int)
-                    )
-                    concept_summary_df["first_ts"] = concept_summary_df["first_ts"].dt.strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    concept_summary_df["last_ts"] = concept_summary_df["last_ts"].dt.strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    concept_summary_df = concept_summary_df.reindex(columns=concept_summary_columns)
-                    involved_norms = concept_summary_df["concepto_norm"].dropna().unique().tolist()
-                    concept_filtered = concept_source.loc[
-                        concept_source["concepto_norm"].isin(involved_norms)
-                    ].copy()
-                    if not concept_filtered.empty:
-                        concept_filtered = concept_filtered.sort_values(
-                            ["concepto_norm", "fecha_hora_ts"], ascending=[True, True]
-                        )
-                        concept_tx_df = concept_filtered.reindex(columns=concept_tx_columns)
-
-    concept_summary_df["nivel_respuesta"] = "concepto"
-    concept_summary_df["timeframe"] = timeframe
-    if not concept_summary_df.empty:
-        concept_summary_df["interpretabilidad"] = concept_summary_df.apply(
-            lambda row: (
-                f"El concepto crudo '{_coalesce_str(row.get('concepto_crudo'), default='sin_concepto')}' se reutilizó "
-                f"en {int(row.get('n_pairs', 0))} pares dentro de {row.get('days_range', 0)} días, "
-                f"acumulando {int(row.get('tx_count', 0))} transacciones entre {row.get('first_ts', 'sin_fecha')} "
-                f"y {row.get('last_ts', 'sin_fecha')}."
-                + (
-                    " Se listan conceptos crudos frecuentes sin cumplir aún el criterio multi-par (modo relajado)."
-                    if concept_summary_relajado
-                    else ""
-                )
-            ),
-            axis=1,
-        )
-    else:
-        concept_summary_df["interpretabilidad"] = pd.Series(dtype="object")
-
-    concept_tx_df["nivel_respuesta"] = "transaccion_concepto"
-    concept_tx_df["timeframe"] = timeframe
-    if not concept_tx_df.empty:
-        concept_tx_df["interpretabilidad"] = concept_tx_df.apply(
-            lambda row: (
-                f"La transacción del {row.get('fecha_hora_ts', 'sin_fecha')} repitió el concepto crudo "
-                f"'{_coalesce_str(row.get('nlp_concepto_crudo'), default='sin_concepto')}' entre "
-                f"{_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
-                f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')}, "
-                f"reforzando un posible patrón coordinado en '{timeframe}'."
-            ),
-            axis=1,
-        )
-    else:
-        concept_tx_df["interpretabilidad"] = pd.Series(dtype="object")
-
-    frames = [summary_df, tx_df]
-    if include_raw_concept:
-        frames.extend([concept_summary_df, concept_tx_df])
-    combined = pd.concat(frames, ignore_index=True, sort=False)
-    ordered_cols = [
+    tx = _get_section(reports, "transaccion", timeframe)
+    empty_columns = [
         "timeframe",
         "nivel_respuesta",
-    ] + [
-        c
-        for c in summary_columns
-        + tx_columns
-        + (concept_summary_columns + ["concepto_norm", "nlp_concepto_crudo"] if include_raw_concept else [])
-        if c in combined.columns
+        COL_RECEIVER_ID,
+        "nlp_concepto_sospechoso",
+        "emisores_unicos",
+        "emisores_detalle",
+        "meses_distintos",
+        "meses_detalle",
+        "tx_count",
+        "monto_total",
+        "riesgo_promedio",
+        "riesgo_p95",
+        "interpretabilidad",
     ]
-    ordered_cols = list(dict.fromkeys(ordered_cols)) + ["interpretabilidad"]
-    return combined.reindex(columns=ordered_cols)
+    if tx.empty:
+        return pd.DataFrame(columns=empty_columns)
 
+    required_columns = {COL_SENDER_ID, COL_RECEIVER_ID, "nlp_concepto_sospechoso"}
+    if not required_columns.issubset(tx.columns):
+        return pd.DataFrame(columns=empty_columns)
+
+    work_columns = list(required_columns.union({COL_AMOUNT, "month_id", "fecha_hora_ts", "risk_score"}))
+    existing_columns = [column for column in work_columns if column in tx.columns]
+    work = tx[existing_columns].copy()
+    work[COL_SENDER_ID] = work[COL_SENDER_ID].astype("string").str.strip()
+    work[COL_RECEIVER_ID] = work[COL_RECEIVER_ID].astype("string").str.strip()
+    work["nlp_concepto_sospechoso"] = (
+        work["nlp_concepto_sospechoso"].astype("string").str.strip()
+    )
+    work = work.loc[
+        (work[COL_SENDER_ID] != "")
+        & (work[COL_RECEIVER_ID] != "")
+        & (work["nlp_concepto_sospechoso"] != "")
+    ].copy()
+    if work.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    work[COL_AMOUNT] = pd.to_numeric(work.get(COL_AMOUNT), errors="coerce")
+    work["risk_score"] = pd.to_numeric(work.get("risk_score"), errors="coerce")
+
+    if "month_id" not in work.columns:
+        if "fecha_hora_ts" in work.columns:
+            timestamps = pd.to_datetime(work["fecha_hora_ts"], errors="coerce")
+            work["month_id"] = timestamps.dt.to_period("M").astype("string")
+        else:
+            work["month_id"] = pd.Series(pd.NA, index=work.index, dtype="string")
+    else:
+        work["month_id"] = work["month_id"].astype("string").str.strip()
+
+    work["_sender_clean"] = work[COL_SENDER_ID].replace("", pd.NA)
+    work["_month_clean"] = work["month_id"].replace("", pd.NA)
+
+    def _join_unique(series: pd.Series) -> str:
+        values = {
+            str(value)
+            for value in series.dropna().astype(str)
+            if str(value).strip() not in {"", "<NA>"}
+        }
+        return "; ".join(sorted(values))
+
+    grouped = (
+        work.groupby([COL_RECEIVER_ID, "nlp_concepto_sospechoso"], observed=True)
+        .agg(
+            emisores_unicos=("_sender_clean", "nunique"),
+            emisores_detalle=("_sender_clean", _join_unique),
+            meses_distintos=("_month_clean", "nunique"),
+            meses_detalle=("_month_clean", _join_unique),
+            tx_count=(COL_AMOUNT, "count"),
+            monto_total=(COL_AMOUNT, "sum"),
+            riesgo_promedio=("risk_score", "mean"),
+            riesgo_p95=(
+                "risk_score",
+                lambda s: float(s.dropna().quantile(0.95)) if s.dropna().size else float("nan"),
+            ),
+        )
+        .reset_index()
+    )
+
+    grouped = grouped.loc[grouped["emisores_unicos"].fillna(0) > 1].copy()
+    if grouped.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    grouped["monto_total"] = grouped["monto_total"].fillna(0.0)
+    grouped["tx_count"] = grouped["tx_count"].fillna(0).astype(int)
+    grouped["emisores_unicos"] = grouped["emisores_unicos"].fillna(0).astype(int)
+    grouped["meses_distintos"] = grouped["meses_distintos"].fillna(0).astype(int)
+    grouped["riesgo_promedio"] = grouped["riesgo_promedio"].fillna(float("nan"))
+
+    grouped["nivel_respuesta"] = "concepto_receptor"
+    grouped["timeframe"] = timeframe
+
+    grouped["interpretabilidad"] = grouped.apply(
+        lambda row: (
+            f"Durante '{timeframe}', la persona {_coalesce_str(row.get(COL_RECEIVER_ID), default='sin_receptor')} "
+            f"recibió el concepto '{_coalesce_str(row.get('nlp_concepto_sospechoso'), default='SIN_CONCEPTO')}' "
+            f"desde {int(row.get('emisores_unicos', 0))} emisores diferentes en "
+            f"{int(row.get('meses_distintos', 0))} meses ({row.get('meses_detalle') or 'sin_mes'}), "
+            f"sumando {int(row.get('tx_count', 0))} transacciones por {_format_float(row.get('monto_total', 0))}. "
+            f"Emisores: {row.get('emisores_detalle') or 'sin_detalle'}."
+            + (
+                f" Riesgo promedio {row.get('riesgo_promedio', float('nan')):.2f}"
+                if pd.notna(row.get('riesgo_promedio'))
+                else ""
+            )
+            + (
+                f" (p95={row.get('riesgo_p95', float('nan')):.2f})"
+                if pd.notna(row.get('riesgo_p95'))
+                else ""
+            )
+        ),
+        axis=1,
+    )
+
+    grouped = grouped.sort_values(
+        ["emisores_unicos", "meses_distintos", "monto_total"],
+        ascending=[False, False, False],
+    )
+
+    ordered_columns = [
+        "timeframe",
+        "nivel_respuesta",
+        COL_RECEIVER_ID,
+        "nlp_concepto_sospechoso",
+        "emisores_unicos",
+        "emisores_detalle",
+        "meses_distintos",
+        "meses_detalle",
+        "tx_count",
+        "monto_total",
+        "riesgo_promedio",
+        "riesgo_p95",
+        "interpretabilidad",
+    ]
+
+    return grouped.reindex(columns=ordered_columns)
 
 def question6_centralizers(
     reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME

@@ -304,7 +304,7 @@ def plot_q5_reference_reuse(
     ax: Optional[Axes] = None,
     top_n: int = 10,
 ) -> Axes:
-    """Grafica referencias de pago recurrentes."""
+    """Grafica receptores que reciben conceptos sospechosos desde múltiples emisores."""
     data = question5_reference_reuse(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
@@ -312,29 +312,38 @@ def plot_q5_reference_reuse(
             axis,
             "q5_reference_reuse",
             timeframe,
-            "Sin referencias recurrentes detectadas.",
+            "Sin receptores con conceptos sospechosos repetidos por múltiples emisores.",
         )
 
     work = data.copy()
     if "nivel_respuesta" in work.columns:
-        work = work.loc[work["nivel_respuesta"] == "referencia"].copy()
+        work = work.loc[work["nivel_respuesta"] == "concepto_receptor"].copy()
     if work.empty:
         return _render_empty_chart(
             axis,
             "q5_reference_reuse",
             timeframe,
-            "Solo hay detalle de transacciones sin resumen por referencia.",
+            "No se encontraron combinaciones receptor-concepto multi-emisor.",
         )
 
-    work = work.sort_values(["tx_count", "n_pairs"], ascending=[False, False]).head(top_n)
-    if "reference_norm" in work:
-        work["reference_norm"] = work["reference_norm"].fillna("sin_referencia").astype(str)
-    sns.barplot(data=work, x="tx_count", y="reference_norm", hue="n_pairs", ax=axis)
+    work = work.sort_values(
+        ["emisores_unicos", "monto_total", "tx_count"],
+        ascending=[False, False, False],
+    ).head(top_n)
+    work["label"] = (
+        work.get(COL_RECEIVER_ID, pd.Series(dtype="object")).fillna("sin_receptor").astype(str)
+        + " ← "
+        + work.get("nlp_concepto_sospechoso", pd.Series(dtype="object")).fillna("SIN_CONCEPTO").astype(str)
+    )
+
+    sns.barplot(data=work, x="emisores_unicos", y="label", hue="meses_distintos", ax=axis)
     _apply_plot_metadata(axis, "q5_reference_reuse", timeframe)
-    axis.set_xlabel("Número de transacciones")
-    axis.set_ylabel("Referencia normalizada")
-    axis.legend(title="Pares distintos")
+    axis.set_xlabel("Emisores distintos")
+    axis.set_ylabel("Receptor ← concepto")
+    if axis.get_legend() is not None:
+        axis.legend(title="Meses con el concepto")
     return axis
+
 
 
 def plot_q6_centralizers(
