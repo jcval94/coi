@@ -1764,6 +1764,8 @@ def question10_yoyo_streaks(
         "sig_yoyo",
         "risk_score",
     ]
+    if COL_AMOUNT in tx.columns:
+        required.append(COL_AMOUNT)
     if tx.empty or not set(required).issubset(tx.columns):
         return pd.DataFrame(
             columns=[
@@ -1776,12 +1778,18 @@ def question10_yoyo_streaks(
                 "riesgo_promedio_par",
                 "riesgo_max_yo_yo",
                 "riesgo_promedio_yo_yo",
+                "monto_total_yo_yo",
+                "monto_promedio_yo_yo",
                 "interpretabilidad",
             ]
         )
 
     work = tx[required].copy()
     work["sig_yoyo"] = work["sig_yoyo"].fillna(False).astype(bool)
+    if COL_AMOUNT not in work:
+        work[COL_AMOUNT] = 0.0
+    else:
+        work[COL_AMOUNT] = work[COL_AMOUNT].fillna(0.0).astype(float)
     heuristic = False
     heuristic_note = None
     if not work["sig_yoyo"].any():
@@ -1847,6 +1855,8 @@ def question10_yoyo_streaks(
                         "riesgo_promedio_par",
                         "riesgo_max_yo_yo",
                         "riesgo_promedio_yo_yo",
+                        "monto_total_yo_yo",
+                        "monto_promedio_yo_yo",
                         "interpretabilidad",
                     ]
                 )
@@ -1872,6 +1882,11 @@ def question10_yoyo_streaks(
             else []
         )
         risk_scores = ordered.loc[ordered["sig_yoyo"], "risk_score"].astype(float)
+        amounts = (
+            ordered.loc[ordered["sig_yoyo"], COL_AMOUNT].astype(float)
+            if COL_AMOUNT in ordered
+            else pd.Series(dtype=float)
+        )
         longest = 0
         current = 0
         total_hits = int(flags.count(True))
@@ -1889,6 +1904,8 @@ def question10_yoyo_streaks(
                 "meses_con_yo_yo": int(len(months)),
                 "riesgo_max_yo_yo": float(risk_scores.max()) if not risk_scores.empty else 0.0,
                 "riesgo_promedio_yo_yo": float(risk_scores.mean()) if not risk_scores.empty else 0.0,
+                "monto_total_yo_yo": float(amounts.sum()) if not amounts.empty else 0.0,
+                "monto_promedio_yo_yo": float(amounts.mean()) if not amounts.empty else 0.0,
             }
         )
 
@@ -1906,6 +1923,8 @@ def question10_yoyo_streaks(
                 "riesgo_promedio_par",
                 "riesgo_max_yo_yo",
                 "riesgo_promedio_yo_yo",
+                "monto_total_yo_yo",
+                "monto_promedio_yo_yo",
                 "interpretabilidad",
             ]
         )
@@ -1963,6 +1982,8 @@ def question10_yoyo_streaks(
                     "riesgo_promedio_par",
                     "riesgo_max_yo_yo",
                     "riesgo_promedio_yo_yo",
+                    "monto_total_yo_yo",
+                    "monto_promedio_yo_yo",
                     "interpretabilidad",
                 ]
             )
@@ -1978,7 +1999,9 @@ def question10_yoyo_streaks(
             f"en {int(row.get('meses_con_yo_yo', 0))} meses distintos, con una racha máxima de "
             f"{int(row.get('racha_max_yo_yo', 0))} eventos consecutivos. El riesgo máximo observado "
             f"para el par alcanzó {row.get('riesgo_max_par', 0.0):.2f} (promedio {row.get('riesgo_promedio_par', 0.0):.2f}), "
-            f"mientras que las transacciones Yo-Yo llegaron a un riesgo máximo de {row.get('riesgo_max_yo_yo', 0.0):.2f}."
+            f"mientras que las transacciones Yo-Yo llegaron a un riesgo máximo de {row.get('riesgo_max_yo_yo', 0.0):.2f} "
+            f"y movieron {_format_float(row.get('monto_total_yo_yo', 0.0))} en total "
+            f"({_format_float(row.get('monto_promedio_yo_yo', 0.0))} por transacción)."
             + (
                 " Se empleó un umbral de riesgo flexible para exponer la racha cuando el criterio "
                 "estricto no devolvió casos." if relaxed and row.get("riesgo_max_par", 0.0) < float(risk_threshold) else ""
@@ -2001,6 +2024,8 @@ def question10_yoyo_streaks(
         "riesgo_promedio_par",
         "riesgo_max_yo_yo",
         "riesgo_promedio_yo_yo",
+        "monto_total_yo_yo",
+        "monto_promedio_yo_yo",
         "interpretabilidad",
     ]
     return filtered.reindex(columns=columns)

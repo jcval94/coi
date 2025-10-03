@@ -329,11 +329,42 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q10 – Rachas Yo-Yo prolongadas** (`question10_yoyo_streaks`):
+  - **¿Qué es una transacción Yo-Yo?** Imagina que Ana (que vende peras) le presta una canasta de fruta a Bruno (que vende manzanas) en la mañana, y a la hora siguiente Bruno le devuelve otra canasta casi idéntica. Si repiten ese intercambio de ida y vuelta varias veces en un día, sin que realmente cambie quién se queda con las frutas, estamos ante un movimiento Yo-Yo: el dinero (o las peras y manzanas) va y regresa rápidamente entre las mismas dos personas.
+  - **Ejemplo con peras y manzanas:**
+    - 10:00 — Ana manda 10 peras a Bruno.
+    - 10:15 — Bruno manda 10 manzanas a Ana.
+    - 11:00 — Ana vuelve a mandar 9 peras a Bruno.
+    - 11:10 — Bruno responde con 9 manzanas a Ana.
+    Aunque pareciera que hay mucho movimiento, en realidad solo están “pasándose la misma canasta” una y otra vez, lo que puede ocultar actividades sospechosas.
   - **Metodología:** localiza pares que envían y reciben dinero entre sí en rápida sucesión. Primero utiliza la bandera
     `sig_yoyo` dentro de `reports["transaccion"][timeframe]` para detectar secuencias ida-vuelta; cuando no existe esa bandera,
     recalcula la racha comparando cada transacción con su reversa dentro de ventanas móviles (8, 24 y 72 horas) o, en último
     caso, marcando pares que operan en ambas direcciones. Luego cruza con `reports["par_personas"]` para anexar el riesgo
     histórico del par y prioriza los resultados que superan un mínimo de eventos consecutivos y un umbral de riesgo.
+  - **¿Por qué se considera un riesgo de COI?** Una racha Yo-Yo suele aparecer cuando dos personas pactan reembolsarse o
+    prestarse fondos de forma circular para simular pagos legítimos (por ejemplo, disfrazar un beneficio indebido como
+    reembolsos sucesivos). Este patrón indica potencial colusión, ocultamiento de regalos u otras prácticas que vulneran las
+    políticas de conflicto de interés.
+  - **¿Qué columnas devuelve Q10?** La salida es una tabla ordenada por riesgo máximo del par. Sus campos principales son:
+    - `timeframe`: la ventana solicitada (por ejemplo, `"todo_el_tiempo"`). Se agrega al final del proceso para dejar claro
+      el horizonte evaluado.
+    - `par_bidir`: el identificador del par en ambos sentidos (`emisor⇄receptor`). Se genera ordenando los identificadores de
+      cada transacción para que `A→B` y `B→A` queden agrupados.
+    - `racha_max_yo_yo`: la racha consecutiva más larga de transacciones marcadas como Yo-Yo dentro del par. Se calcula al
+      recorrer cronológicamente las banderas `sig_yoyo` y contar la racha más larga antes de que aparezca una transacción sin
+      bandera.
+    - `tx_yo_yo_totales`: número total de transacciones con `sig_yoyo=True` para el par. Es simplemente el conteo de filas
+      etiquetadas como Yo-Yo después de aplicar la bandera original o la heurística de ida y vuelta.
+    - `meses_con_yo_yo`: cantidad de meses distintos en los que se observaron transacciones Yo-Yo. Agrupa el mes (`month_id`)
+      de cada transacción marcada y cuenta los únicos.
+    - `riesgo_max_par` y `riesgo_promedio_par`: resumen del riesgo histórico del par provenientes de `reports["par_personas"]`.
+      Si no hay datos, ambos se rellenan con `0.0` tras combinar la tabla de rachas con la de riesgo por par.
+    - `riesgo_max_yo_yo` y `riesgo_promedio_yo_yo`: máximo y promedio de `risk_score` solo entre las transacciones
+      identificadas como Yo-Yo. Si no hay riesgos asociados, se devuelven `0.0`.
+    - `monto_total_yo_yo` y `monto_promedio_yo_yo`: suma y promedio del `movement_amount` exclusivamente en las transacciones
+      Yo-Yo del par. Permiten dimensionar si la racha representa montos relevantes para las políticas de COI.
+    - `interpretabilidad`: texto legible que condensa racha, número de transacciones, meses y riesgos, además de indicar si se
+      relajaron umbrales o se utilizó una heurística en ausencia de `sig_yoyo`.
   - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos consecutivos, por defecto `2`); `risk_threshold`
     (riesgo mínimo del par, por defecto `1.8`).
   - **Ejemplo sencillo:**
