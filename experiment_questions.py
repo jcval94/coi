@@ -3503,6 +3503,9 @@ def question18_user_risk_scores(
         "desbalance_persona_meses_totales",
         "desbalance_persona_tasa_meses_envia_extremo",
         "desbalance_persona_tasa_meses_recibe_extremo",
+        "std_monto_mensual",
+        "std_dia_pago_mensual",
+        "detalle_pagos_mensuales",
         "flags_activas",
         "flag_rate_max",
         "banderas_destacadas",
@@ -3528,6 +3531,9 @@ def question18_user_risk_scores(
                     "desbalance_persona_meses_totales": 0,
                     "desbalance_persona_tasa_meses_envia_extremo": 0.0,
                     "desbalance_persona_tasa_meses_recibe_extremo": 0.0,
+                    "std_monto_mensual": 0.0,
+                    "std_dia_pago_mensual": 0.0,
+                    "detalle_pagos_mensuales": [],
                     "flags_activas": 0,
                     "flag_rate_max": 0.0,
                     "banderas_destacadas": "sin_banderas_destacadas",
@@ -3541,6 +3547,89 @@ def question18_user_risk_scores(
 
     work = personas.copy()
     work["timeframe"] = timeframe
+
+    detalle_mensual: dict[str, list[dict[str, Any]]] = {}
+    std_monto_map: dict[str, float] = {}
+    std_dia_map: dict[str, float] = {}
+
+    tx = _get_section(reports, "transaccion", timeframe)
+    required_tx_cols = {COL_RECEIVER_ID, COL_AMOUNT, "fecha_hora_ts", "month_id"}
+    if not tx.empty and required_tx_cols.issubset(tx.columns):
+        pagos = tx[list(required_tx_cols)].copy()
+        pagos[COL_RECEIVER_ID] = (
+            pagos[COL_RECEIVER_ID].astype("string").str.strip()
+        )
+        pagos = pagos[pagos[COL_RECEIVER_ID] != ""]
+        pagos[COL_AMOUNT] = pd.to_numeric(pagos[COL_AMOUNT], errors="coerce")
+        pagos["fecha_hora_ts"] = pd.to_datetime(
+            pagos["fecha_hora_ts"], errors="coerce"
+        )
+        pagos["month_id"] = pagos["month_id"].astype("string").str.strip()
+        pagos = pagos.dropna(subset=[COL_AMOUNT, "fecha_hora_ts", "month_id"])
+        pagos = pagos[pagos["month_id"] != ""]
+
+        if not pagos.empty:
+            pagos = pagos.sort_values([COL_RECEIVER_ID, "month_id", "fecha_hora_ts"])
+            for persona_id, persona_df in pagos.groupby(
+                COL_RECEIVER_ID, observed=True
+            ):
+                persona_key = str(persona_id)
+                registros: list[dict[str, Any]] = []
+                montos: list[float] = []
+                dias: list[float] = []
+                for month_id, month_df in persona_df.groupby(
+                    "month_id", observed=True
+                ):
+                    if month_df.empty:
+                        continue
+                    mes = str(month_id) if month_id is not None else "sin_mes"
+                    fechas = month_df["fecha_hora_ts"].dt.date
+                    montos_mes = month_df[COL_AMOUNT].astype(float)
+                    total_mes = float(montos_mes.sum())
+                    dia_promedio = float(month_df["fecha_hora_ts"].dt.day.mean())
+                    registros.append(
+                        {
+                            "mes": mes,
+                            "monto_total": total_mes,
+                            "dia_pago_promedio": dia_promedio,
+                            "pagos": [
+                                {
+                                    "fecha": fecha.isoformat(),
+                                    "monto": float(monto),
+                                }
+                                for fecha, monto in zip(fechas, montos_mes)
+                            ],
+                        }
+                    )
+                    montos.append(total_mes)
+                    dias.append(dia_promedio)
+                if registros:
+                    detalle_mensual[persona_key] = registros
+                    if len(montos) >= 2:
+                        std_monto_map[persona_key] = float(
+                            pd.Series(montos, dtype="float64").std(ddof=0)
+                        )
+                    else:
+                        std_monto_map[persona_key] = 0.0
+                    dias_validos = [dia for dia in dias if pd.notna(dia)]
+                    if len(dias_validos) >= 2:
+                        std_dia_map[persona_key] = float(
+                            pd.Series(dias_validos, dtype="float64").std(ddof=0)
+                        )
+                    else:
+                        std_dia_map[persona_key] = 0.0
+                else:
+                    detalle_mensual[persona_key] = []
+                    std_monto_map[persona_key] = 0.0
+                    std_dia_map[persona_key] = 0.0
+
+    work["persona"] = work["persona"].astype("string").str.strip()
+    work["std_monto_mensual"] = work["persona"].map(std_monto_map).fillna(0.0)
+    work["std_dia_pago_mensual"] = work["persona"].map(std_dia_map).fillna(0.0)
+    work["detalle_pagos_mensuales"] = work["persona"].map(detalle_mensual)
+    work["detalle_pagos_mensuales"] = work["detalle_pagos_mensuales"].apply(
+        lambda value: value if isinstance(value, list) else []
+    )
 
     for col in ["n_tx_emit", "n_tx_recv"]:
         if col in work.columns:
