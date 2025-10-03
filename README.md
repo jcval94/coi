@@ -254,7 +254,12 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q6 – Receptores centralizadores** (`question6_centralizers`):
-  - **Metodología:** resume `reports["transaccion"][timeframe]` por mes y receptor (`receptor-user_id`), calculando el `inflow` total, emisores únicos, número de transacciones y riesgo promedio (`risk_score`). Define una métrica de `centralidad = inflow * emisores_unicos`, ordena de mayor a menor por mes y genera explicaciones con esos indicadores.
+  - **Metodología:** resume `reports["transaccion"][timeframe]` por mes y receptor (`receptor-user_id`) y calcula las siguientes métricas antes de ordenar de mayor a menor por mes y redactar la interpretabilidad:
+    - `inflow`: suma de `movement_amount` (columna `COL_AMOUNT`) recibida por el receptor durante el mes.
+    - `emisores_unicos`: conteo de emisores distintos (`user_id`) que enviaron fondos a ese receptor en el mes (`nunique`).
+    - `n_tx`: número total de transacciones recibidas (`count` sobre `movement_amount`).
+    - `centralidad`: producto `inflow * emisores_unicos`, utilizado como métrica de priorización.
+    - Además, se calcula `risk_avg` como el promedio de `risk_score` asociado a las transacciones del receptor.
   - **Parámetros clave:** `timeframe`.
   - **Visualización rápida:**
     ```python
