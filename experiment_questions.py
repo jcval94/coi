@@ -237,6 +237,21 @@ def _combine_unique_texts(values: Iterable[Any]) -> str:
     return "; ".join(ordered)
 
 
+def _combine_unique_categories(values: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in (None, "", pd.NA):
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        if text not in seen:
+            seen.add(text)
+            ordered.append(text)
+    return ordered
+
+
 def _max_text_length(values: Iterable[Any]) -> int:
     lengths = []
     for value in values:
@@ -447,15 +462,18 @@ def question1_manager_nlp(
        subordinado según las categorías proporcionadas y sus sinónimos.
     3. Normaliza identificadores de manager y subordinado y descarta registros
        incompletos.
-    4. Agrega conteos y montos por mes, categoría y par jerárquico, conservando
-       los conceptos crudos y las descripciones de origen para construir la
-       explicación en lenguaje natural.
+    4. Agrega conteos y montos por mes y par jerárquico, consolidando todas las
+       categorías detectadas en una lista junto con los conceptos crudos y las
+       descripciones de origen para construir la explicación en lenguaje
+       natural.
 
     Returns
     -------
     pandas.DataFrame
         Tabla priorizada con columnas de interpretabilidad sobre conceptos NLP
-        sospechosos en relaciones manager-subordinado.
+        sospechosos en relaciones manager-subordinado. La columna
+        ``"nlp_concepto_sospechoso"`` contiene una lista de conceptos únicos
+        detectados para cada par y periodo.
     """
     tx = _get_section(reports, "transaccion", timeframe)
     if tx.empty:
@@ -534,6 +552,10 @@ def question1_manager_nlp(
         "tx_count": (COL_AMOUNT, "count"),
         "monto_total": (COL_AMOUNT, "sum"),
         "nlp_concepto_crudo": ("nlp_concepto_crudo", _combine_unique_texts),
+        "nlp_concepto_sospechoso": (
+            "matched_category",
+            _combine_unique_categories,
+        ),
     }
     if COL_DESCRIPTION in hits.columns:
         aggregations["nlp_descripciones"] = (
@@ -549,12 +571,7 @@ def question1_manager_nlp(
 
     agg = (
         hits.groupby(
-            [
-                "month_id",
-                "matched_category",
-                "manager_user_id",
-                "subordinado_user_id",
-            ],
+            ["month_id", "manager_user_id", "subordinado_user_id"],
             observed=True,
         )
         .agg(**aggregations)
@@ -562,10 +579,15 @@ def question1_manager_nlp(
     )
     agg = agg.sort_values(["tx_count", "monto_total"], ascending=[False, False])
     agg["timeframe"] = timeframe
-    agg = agg.rename(columns={"matched_category": "nlp_concepto_sospechoso"})
     agg["nlp_concepto_crudo"] = agg["nlp_concepto_crudo"].fillna("")
     if "nlp_descripciones" in agg:
         agg["nlp_descripciones"] = agg["nlp_descripciones"].fillna("")
+    agg["nlp_concepto_sospechoso"] = agg["nlp_concepto_sospechoso"].apply(
+        lambda values: values if isinstance(values, list) else []
+    )
+    agg["_concepto_label"] = agg["nlp_concepto_sospechoso"].apply(
+        lambda values: ", ".join(values) if values else "SIN_CONCEPTO"
+    )
     if direction == "manager_a_subordinado":
         def _build_message(row: pd.Series) -> str:
             return (
@@ -573,7 +595,7 @@ def question1_manager_nlp(
                 f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
                 f"{int(row.get('tx_count', 0))} pagos al subordinado "
                 f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
-                f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
+                f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
                 f"{_format_float(row.get('monto_total', 0))} en monto total."
                 + (
                     f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
@@ -593,7 +615,7 @@ def question1_manager_nlp(
                 f"el subordinado {row.get('subordinado_user_id', 'sin_subordinado')} envió "
                 f"{int(row.get('tx_count', 0))} pagos al manager "
                 f"{row.get('manager_user_id', 'sin_manager')} etiquetados como "
-                f"'{row.get('nlp_concepto_sospechoso', 'SIN_CONCEPTO')}', acumulando "
+                f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
                 f"{_format_float(row.get('monto_total', 0))} en monto total."
                 + (
                     f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
@@ -608,6 +630,7 @@ def question1_manager_nlp(
             )
 
     agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
+    agg = agg.drop(columns=["_concepto_label"])
     columns = [
         "timeframe",
         "month_id",

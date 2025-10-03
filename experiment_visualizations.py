@@ -93,8 +93,43 @@ def plot_q1_manager_nlp(
     ax: Optional[Axes] = None,
     top_n: int = 10,
     direction: str = "manager_a_subordinado",
+    invert_direction: bool = False,
 ) -> Axes:
-    """Grafica los pares manager-subordinado con conceptos NLP sospechosos."""
+    """Grafica los pares manager-subordinado con conceptos NLP sospechosos.
+
+    Parameters
+    ----------
+    reports
+        Salidas tabulares del pipeline de detección de fraude.
+    timeframe
+        Ventana temporal a consultar.
+    ax
+        Eje de Matplotlib donde dibujar la gráfica.
+    top_n
+        Número máximo de pares a mostrar.
+    direction
+        Dirección inicial del flujo de pagos a visualizar. Acepta
+        ``"manager_a_subordinado"`` o ``"subordinado_a_manager"``.
+    invert_direction
+        Cuando es ``True`` invierte el flujo indicado en ``direction`` para
+        permitir la visualización del sentido contrario sin necesidad de
+        recalcular la tabla previa.
+    """
+    direction = str(direction)
+    if direction not in QUESTION1_DIRECTIONS:
+        valid = "', '".join(QUESTION1_DIRECTIONS)
+        raise ValueError(
+            "direction debe ser uno de '{valid}', se recibió '{direction}'".format(
+                valid=valid, direction=direction
+            )
+        )
+    if invert_direction:
+        direction = (
+            "subordinado_a_manager"
+            if direction == "manager_a_subordinado"
+            else "manager_a_subordinado"
+        )
+
     data = question1_manager_nlp(reports, timeframe, direction=direction)
     axis = _ensure_axis(ax)
     if data.empty:
@@ -106,6 +141,9 @@ def plot_q1_manager_nlp(
         )
 
     work = data.copy()
+    work["concepto_label"] = work["nlp_concepto_sospechoso"].apply(
+        lambda values: ", ".join(values) if isinstance(values, list) and values else "SIN_CONCEPTO"
+    )
     if direction == "manager_a_subordinado":
         arrow = "→"
         y_label = "Manager → Subordinado"
@@ -127,11 +165,13 @@ def plot_q1_manager_nlp(
     work["pair"] = left + arrow + right
     work = work.sort_values(["tx_count", "monto_total"], ascending=[False, False]).head(top_n)
 
-    sns.barplot(data=work, x="tx_count", y="pair", hue="nlp_concepto_sospechoso", ax=axis)
+    sns.barplot(data=work, x="tx_count", y="pair", hue="concepto_label", ax=axis)
     _apply_plot_metadata(axis, "q1_manager_nlp", timeframe)
     axis.set_xlabel("Número de transacciones")
     axis.set_ylabel(y_label)
-    axis.legend(title="Concepto")
+    legend = axis.get_legend()
+    if legend is not None:
+        legend.set_title("Concepto")
     return axis
 
 
