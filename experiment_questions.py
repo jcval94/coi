@@ -1042,20 +1042,25 @@ def question4_quid_negative_value_vs_load(
     def _describe_quid(row: pd.Series) -> str:
         delta = row.get("feat_quid_value_vs_load_days")
         if pd.notna(delta) and float(delta) < 0:
-            delta_txt = f"mostró autorizaciones previas con {int(delta)} días negativos"
+            dias = abs(int(delta))
+            delta_txt = (
+                f"se cargó {dias} días antes de tener una autorización, un desfase negativo que"
+                " levanta sospechas"
+            )
         elif pd.notna(delta):
-            delta_txt = f"presentó un desfase de {int(delta)} días (no negativo)"
+            delta_txt = f"mostró una diferencia de {int(delta)} días entre la carga y la autorización"
         else:
-            delta_txt = "no cuenta con desfase registrado"
+            delta_txt = "no tiene registro claro del desfase entre carga y autorización"
         base = (
-            f"En la ventana '{timeframe}', la transacción del {row.get('fecha_hora_ts', 'sin_fecha')} "
+            f"Durante '{timeframe}', la transacción del {row.get('fecha_hora_ts', 'sin_fecha')} "
             f"entre {_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
-            f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')} {delta_txt}, "
-            f"con puntaje quid-pro-quo {row.get('feat_quid_score', 0):.2f}. "
-            f"Se señala como responsable a {row.get('responsable_user_id', 'sin_responsable')}."
+            f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')} {delta_txt}. "
+            f"El puntaje quid-pro-quo asociado es {row.get('feat_quid_score', 0):.2f}. "
+            f"La persona que debería revisar la situación es "
+            f"{row.get('responsable_user_id', 'sin_responsable')}."
         )
         if relaxed:
-            base += " Se listan los casos con los menores desfases/puntajes disponibles para seguimiento preventivo."
+            base += " Se muestran los casos con los desfases o puntajes más llamativos aunque no sean negativos, para no perderlos de vista."
         return base
 
     result["interpretabilidad"] = result.apply(_describe_quid, axis=1)
