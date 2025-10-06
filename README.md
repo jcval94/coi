@@ -1,5 +1,14 @@
 # COI/Fraud mensual + NLP MX + Seaborn Viz + Q&A
 
+## ¿Qué problema resuelve este proyecto?
+Imagina que una empresa necesita vigilar que sus empleados no usen su cargo para beneficiarse injustamente (lo que conocemos como *conflicto de interés*). Este repositorio reúne un conjunto de herramientas que:
+
+- Analizan historiales de transacciones para encontrar patrones sospechosos (por ejemplo, intercambios de favores, montos repetidos o referencias de pago clonadas).
+- Usan modelos de lenguaje para detectar descripciones extrañas en pagos y así levantar banderas de alerta.
+- Generan reportes, gráficos y respuestas guiadas que ayudan a los equipos de auditoría a explicar qué ocurre con cada persona, par o transacción.
+
+La idea es que, aun si apenas estás aprendiendo sobre datos, puedas seguir los pasos, cargar un archivo CSV y obtener pistas claras sobre posibles conflictos de interés dentro de una organización.
+
 ## Requisitos
 - Instalar dependencias con `pip install -r requirements.txt` (incluye pandas, numpy, seaborn, scikit-learn y scipy; estas dos últimas son opcionales si no se entrenan embeddings)
 
@@ -175,8 +184,9 @@ dataset = generate_diverse_dataset()  # 6 000 filas por defecto
 El módulo `experiment_questions.py` genera respuestas tabulares para siete preguntas recurrentes a partir del diccionario de `reports` producido por `run_pipeline`. Todas las funciones aceptan `timeframe` (por defecto `"todo_el_tiempo"`) y devuelven columnas de interpretabilidad en español listando la lógica aplicada.
 
 - **Q1 – Manager con conceptos NLP sospechosos** (`question1_manager_nlp`):
-  - **Metodología:** filtra transacciones manager-subordinado en `reports["transaccion"][timeframe]`, concatena campos `nlp_concepto_sospechoso`, `descripcion` y `tx_tags`, y ejecuta coincidencias por expresiones regulares contra las categorías `("SOBORNO", "FACILITACIÓN", "OFUSCACIÓN", "EXTORSIÓN", "FAVORES SEXUALES")` y sus sinónimos (`NLP_CATEGORY_SYNONYMS`). Agrupa por mes y par jerárquico, sumando `tx_count`, `monto_total` y recopilando en una lista todos los conceptos detectados para construir textos explicativos.
-  - **Parámetros clave:** `timeframe`; `categories` (lista de categorías NLP, por defecto las cinco anteriores); `direction` (``"manager_a_subordinado"`` por defecto, o ``"subordinado_a_manager"`` para invertir el flujo).
+  - **¿Qué detecta?** Relaciones jefe⇄subordinado donde las descripciones de los pagos contienen palabras asociadas a sobornos, favores indebidos o presiones.
+  - **¿Cómo lo hace?** Junta los textos relevantes de cada transacción y los compara con un listado de categorías sospechosas. Después resume los montos y la cantidad de pagos por mes para contar la historia en lenguaje sencillo.
+  - **Parámetros clave:** `timeframe`; `categories` (lista de conceptos a vigilar, ya configurada con las cinco categorías principales); `direction` (para analizar de jefe a subordinado o al revés).
   - **Visualización rápida:**
     ```python
     import matplotlib.pyplot as plt
@@ -191,8 +201,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     `invert_direction=True` al invocar la función de visualización.
 
 - **Q2 – Conceptos NLP con mayor severidad** (`question2_manager_concepts`):
-  - **Metodología:** reutiliza la detección de Q1 sobre `reports["transaccion"][timeframe]` y agrega por mes y categoría calculando número de transacciones y el cuantil 0.95 de `risk_score`, ordenando por severidad antes de redactar la explicación.
-  - **Parámetros clave:** `timeframe`; categorías NLP internas (idénticas a Q1, sin exponer otro parámetro).
+  - **¿Qué detecta?** Cuáles son los conceptos sospechosos que se repiten con montos altos o riesgosos a lo largo del tiempo.
+  - **¿Cómo lo hace?** Reutiliza las coincidencias de Q1, agrupa por categoría y mes, y calcula cuántas transacciones hubo y qué tan altos fueron sus puntajes de riesgo.
+  - **Parámetros clave:** `timeframe`; las mismas categorías internas de NLP que usa Q1.
   - **Visualización rápida:**
     ```python
     import matplotlib.pyplot as plt
@@ -205,16 +216,10 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q3 – Pares con rasgos Quid Pro Quo** (`question3_quid_pairs`):
-  - **Metodología:** parte del resumen `reports["casuistica_quid_pro_quo_par"][timeframe]` y del detalle `reports["casuistica_quid_pro_quo_tx"][timeframe]` (o de `transaccion` si faltan). Selecciona pares con `quid_score_max ≥ min_score` (2.2 por defecto), proporción de interacciones jerárquicas (`quid_manager_ratio`) superior a `min_manager_ratio` (0.5) y alguna aprobación o compensación. Si no hay resultados, recurre a las transacciones base calculando agregados por par, con un modo relajado que prioriza los puntajes más altos disponibles. Complementa con un listado de transacciones destacadas por `feat_quid_score` y, si fue necesario, con umbrales relajados.
-  - **¿Qué significa Quid Pro Quo?** En términos sencillos, es el clásico “yo te doy algo para que tú me des algo a cambio”. Imagina que un gerente aprueba un bono especial para un proveedor y, poco después, recibe favores personales o un pago informal; ese intercambio de favores es un posible quid pro quo. En el contexto de conflicto de interés (COI), esta dinámica es crítica porque rompe la imparcialidad: decisiones que deberían basarse en políticas y méritos se distorsionan por beneficios personales.
-  - **Interpretación de las métricas clave:**
-    - `quid_tx_count`: cuenta de transacciones del par que superan el umbral de sospecha (`feat_quid_score ≥ min_score`). Se obtiene al agrupar por `feat_quid_pair_key` y contar las filas. Un número alto indica repetición del “favor por favor”, lo que fortalece la hipótesis de un conflicto de interés sostenido.
-    - `quid_score_max`: valor máximo de `feat_quid_score` dentro del par. Resume el momento más crítico detectado y prioriza la revisión de los intercambios con señales más fuertes de quid pro quo.
-    - `quid_score_avg`: promedio de los puntajes `feat_quid_score` del par. Se calcula sumando los puntajes y dividiéndolos entre `quid_tx_count`. Un promedio elevado señala que la relación completa está teñida de intercambios sospechosos y no solo un evento aislado.
-    - `quid_manager_ratio`: proporción de transacciones donde interviene una relación de jefatura (`feat_quid_rel_label` clasificado como manager). Se calcula dividiendo las transacciones con bandera de jefatura entre `quid_tx_count`. Mientras más se acerque a 1, mayor es la probabilidad de que alguien con poder de decisión esté condicionando procesos a cambio de beneficios.
-    - `quid_aprob_ratio`: porcentaje de transacciones con aprobaciones explícitas (`feat_quid_has_approval`). Se obtiene como el promedio del indicador booleano. Un ratio alto indica que los favores sospechosos están siendo formalmente validados, algo especialmente preocupante para COI porque legitima decisiones sesgadas.
-    - `quid_comp_ratio`: porcentaje de transacciones con componentes de compensación (`feat_quid_has_comp`). Se calcula como la media del indicador correspondiente. Cuando este ratio es alto, hay evidencia de contraprestaciones materiales o monetarias, lo que refuerza el riesgo de intercambio indebido.
-  - **Parámetros clave:** `timeframe`; `min_score` (float, 2.2 por defecto); `min_manager_ratio` (float, 0.5 por defecto).
+  - **¿Qué detecta?** Duplas de personas que parecen intercambiar favores o beneficios entre sí (el “yo te ayudo si tú me ayudas”).
+  - **¿Cómo lo hace?** Revisa resúmenes y transacciones detalladas, busca pares con puntajes altos de quid pro quo, presencia de jefes y señales de aprobaciones o compensaciones. Si la información es escasa, usa una versión más flexible para no dejar fuera casos relevantes.
+  - **Cómo leer sus columnas principales:** `quid_tx_count` (cuántos favores sospechosos se repiten), `quid_score_max` y `quid_score_avg` (qué tan grave y constante es el patrón), `quid_manager_ratio` (qué tanto intervienen jefes) y `quid_aprob_ratio` / `quid_comp_ratio` (si hubo aprobaciones o pagos de vuelta).
+  - **Parámetros clave:** `timeframe`; `min_score` (2.2 por defecto); `min_manager_ratio` (0.5 por defecto).
   - **Visualización rápida:**
     ```python
     import matplotlib.pyplot as plt
@@ -227,14 +232,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q4 – Autorizaciones con valor negativo vs. carga** (`question4_quid_negative_value_vs_load`):
-  - **Metodología:** inspecciona `casuistica_quid_pro_quo_tx` (o `transaccion` como respaldo) buscando transacciones con `feat_quid_value_vs_load_days < 0`. Si no existen, selecciona las 10 con menores desfases registrados o, en su defecto, los mayores puntajes `feat_quid_score`. Calcula el posible responsable según la relación jerárquica (`relacion`/`feat_quid_rel_label`) y redacta el resumen indicando desfase, puntaje y responsable identificado; marca explícitamente cuando se usó el criterio relajado.
-  - **Campos clave para interpretar el resultado:**
-    - `quid_tx_count`: número de transacciones detectadas para el par emisor↔receptor que superaron el umbral mínimo de `feat_quid_score`. Se obtiene al contar las filas agrupadas por `feat_quid_pair_key`. Un conteo alto indica recurrencia en el posible intercambio de favores y, por lo tanto, mayor riesgo de conflicto de interés sostenido en el tiempo.
-    - `quid_score_max`: puntaje máximo de quid pro quo alcanzado por el par. Se calcula como el valor máximo de `feat_quid_score` dentro del grupo. Un máximo elevado significa que, al menos en una ocasión, la transacción mostró señales muy fuertes de intercambio indebido, lo que amerita revisión prioritaria.
-    - `quid_score_avg`: promedio de los puntajes `feat_quid_score` de ese par. Resume la intensidad típica del patrón sospechoso; si el promedio es alto, no se trata de un evento aislado sino de una dinámica repetida, aumentando la probabilidad de conflicto de interés.
-    - `quid_manager_ratio`: proporción de transacciones del par en las que la relación detectada involucra a un manager (derivada de `feat_quid_rel_label`). Se calcula dividiendo el número de eventos con etiqueta de jefatura entre `quid_tx_count`. Cuanto más se acerque a 1, mayor es la intervención de figuras con poder de decisión, lo que incrementa el riesgo de que exista influencia indebida.
-    - `quid_aprob_ratio`: porcentaje de transacciones del par que contaron con una aprobación identificada (`feat_quid_has_approval`). Se obtiene como la media de ese indicador booleano. Un valor alto sugiere que las operaciones sospechosas reciben validaciones formales, lo que puede ocultar conflictos de interés institucionalizados.
-    - `quid_comp_ratio`: proporción de eventos donde se detectó algún elemento de compensación (`feat_quid_has_comp`). También se calcula como la media del indicador correspondiente. Si el ratio es elevado, hay evidencia de que el beneficio no solo fue autorizado sino que vino acompañado de contraprestaciones, fortaleciendo la hipótesis de quid pro quo.
+  - **¿Qué detecta?** Casos en los que alguien aprueba algo de valor menor al que declaró al inicio (por ejemplo, autoriza un gasto que luego se compensa con un favor).
+  - **¿Cómo lo hace?** Busca transacciones con desfases fuertes entre el momento de la carga y el valor final. Si no hay suficientes ejemplos, toma los 10 desfases más pequeños o los puntajes más altos. También identifica quién pudo ser el responsable dentro de la cadena de mando.
+  - **Cómo leer los números:** reutiliza las mismas columnas explicadas en Q3 (`quid_tx_count`, `quid_score_max`, `quid_score_avg`, `quid_manager_ratio`, `quid_aprob_ratio`, `quid_comp_ratio`) para dimensionar la recurrencia y la gravedad del hallazgo.
   - **Parámetros clave:** `timeframe`.
   - **Visualización rápida:**
     ```python
@@ -248,8 +248,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q5 – Reutilización de referencias de pago** (`question5_reference_reuse`):
-  - **Metodología:** trabaja con `casuistica_referencia_resumen` y `casuistica_referencia_tx`. Prioriza referencias que aparezcan en más de un par (`n_pairs > 1`), ordenadas por número de pares, rango de días (`days_range`) y transacciones. Si esos datos no existen, reconstruye la métrica desde `transaccion` usando `feat_reference_norm` (o normalizando `descripcion`), calcula métricas temporales y filtra por reutilización en ≤30 días; de no haber candidatos, activa un modo relajado que lista las referencias más frecuentes. Finalmente, detalla las transacciones asociadas a cada referencia recurrente.
-  - **Parámetros clave:** `timeframe` (el resto de umbrales y normalizaciones están codificados en la función; no se exponen parámetros adicionales).
+  - **¿Qué detecta?** Referencias o textos de pago copiados entre diferentes pares en lapsos cortos.
+  - **¿Cómo lo hace?** Revisa resúmenes de referencias y, si es necesario, reconstruye la información normalizando las descripciones. Prioriza los casos donde la misma referencia aparece en varios pares o dentro de un rango de días reducido.
+  - **Parámetros clave:** `timeframe` (los demás filtros ya vienen configurados).
   - **Visualización rápida:**
     ```python
     import matplotlib.pyplot as plt
@@ -262,12 +263,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q6 – Receptores centralizadores** (`question6_centralizers`):
-  - **Metodología:** resume `reports["transaccion"][timeframe]` por mes y receptor (`receptor-user_id`) y calcula las siguientes métricas antes de ordenar de mayor a menor por mes y redactar la interpretabilidad:
-    - `inflow`: suma de `movement_amount` (columna `COL_AMOUNT`) recibida por el receptor durante el mes.
-    - `emisores_unicos`: conteo de emisores distintos (`user_id`) que enviaron fondos a ese receptor en el mes (`nunique`).
-    - `n_tx`: número total de transacciones recibidas (`count` sobre `movement_amount`).
-    - `centralidad`: producto `inflow * emisores_unicos`, utilizado como métrica de priorización.
-    - Además, se calcula `risk_avg` como el promedio de `risk_score` asociado a las transacciones del receptor.
+  - **¿Qué detecta?** Personas que reciben dinero de muchos emisores y concentran montos altos en un mismo mes.
+  - **¿Cómo lo hace?** Suma cuánto reciben, cuenta cuántos emisores distintos participan y estima cuántas transacciones llegan. Multiplica el monto por la cantidad de emisores para priorizar a quienes parecen actuar como “imanes” de dinero y añade el riesgo promedio.
   - **Parámetros clave:** `timeframe`.
   - **Visualización rápida:**
     ```python
@@ -281,7 +278,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q7 – Personas con desbalance neto** (`question7_net_imbalance`):
-  - **Metodología:** toma `reports["persona"][timeframe]`, asegura la presencia de `desbalance_persona_monto_neto`, calcula su valor absoluto para ordenar y conserva también los contadores de meses extremos enviando y recibiendo. Produce interpretabilidad destacando el desbalance monetario y los meses con comportamiento extremo.
+  - **¿Qué detecta?** Individuos que envían mucho más de lo que reciben (o viceversa) de forma sostenida.
+  - **¿Cómo lo hace?** Usa el resumen por persona, ordena por el desbalance absoluto y señala los meses en los que la persona tuvo comportamientos extremos.
   - **Parámetros clave:** `timeframe`.
   - **Visualización rápida:**
     ```python
@@ -295,7 +293,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q8 – Receptores nuevos con montos altos** (`question8_case13_new_employees`):
-  - **Metodología:** utiliza `reports["persona"][timeframe]` para filtrar a receptores con bandera `caso13_persona_flag_nuevo_receptor_altos_montos`. Prioriza a quienes recibieron montos altos (percentil 90) dentro de sus primeras interacciones (≤6 meses) y calcula totales, emisores únicos y promedios.
+  - **¿Qué detecta?** Personas recién incorporadas que, en sus primeros meses, reciben montos muy altos.
+  - **¿Cómo lo hace?** Usa la bandera `caso13_persona_flag_nuevo_receptor_altos_montos`, se queda con quienes están en el percentil 90 de montos dentro de los primeros seis meses y resume totales, emisores únicos y promedios.
   - **Parámetros clave:** `timeframe`.
   - **Ejemplo de uso:**
     ```python
@@ -316,7 +315,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q9 – Veteranos que reciben de emisores nuevos** (`question9_case14_veterans_from_newcomers`):
-  - **Metodología:** revisa `reports["persona"][timeframe]` buscando la bandera `caso14_persona_flag_antiguo_recibe_de_nuevos` o, en su defecto, reconstruye las métricas desde transacciones y heurísticas de antigüedad. Agrega transacciones y montos recibidos de emisores recientes resaltando emisores únicos y promedios.
+  - **¿Qué detecta?** Personas con mucha antigüedad que empiezan a recibir dinero de emisores recién llegados.
+  - **¿Cómo lo hace?** Busca la bandera `caso14_persona_flag_antiguo_recibe_de_nuevos` y, si no existe, reconstruye el cálculo a partir de las transacciones para estimar antigüedad y montos recibidos. Luego resume emisores únicos y promedios para dimensionar la relación.
   - **Parámetros clave:** `timeframe`.
   - **Ejemplo de uso:**
     ```python
@@ -337,44 +337,11 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q10 – Rachas Yo-Yo prolongadas** (`question10_yoyo_streaks`):
-  - **¿Qué es una transacción Yo-Yo?** Imagina que Ana (que vende peras) le presta una canasta de fruta a Bruno (que vende manzanas) en la mañana, y a la hora siguiente Bruno le devuelve otra canasta casi idéntica. Si repiten ese intercambio de ida y vuelta varias veces en un día, sin que realmente cambie quién se queda con las frutas, estamos ante un movimiento Yo-Yo: el dinero (o las peras y manzanas) va y regresa rápidamente entre las mismas dos personas.
-  - **Ejemplo con peras y manzanas:**
-    - 10:00 — Ana manda 10 peras a Bruno.
-    - 10:15 — Bruno manda 10 manzanas a Ana.
-    - 11:00 — Ana vuelve a mandar 9 peras a Bruno.
-    - 11:10 — Bruno responde con 9 manzanas a Ana.
-    Aunque pareciera que hay mucho movimiento, en realidad solo están “pasándose la misma canasta” una y otra vez, lo que puede ocultar actividades sospechosas.
-  - **Metodología:** localiza pares que envían y reciben dinero entre sí en rápida sucesión. Primero utiliza la bandera
-    `sig_yoyo` dentro de `reports["transaccion"][timeframe]` para detectar secuencias ida-vuelta; cuando no existe esa bandera,
-    recalcula la racha comparando cada transacción con su reversa dentro de ventanas móviles (8, 24 y 72 horas) o, en último
-    caso, marcando pares que operan en ambas direcciones. Luego cruza con `reports["par_personas"]` para anexar el riesgo
-    histórico del par y prioriza los resultados que superan un mínimo de eventos consecutivos y un umbral de riesgo.
-  - **¿Por qué se considera un riesgo de COI?** Una racha Yo-Yo suele aparecer cuando dos personas pactan reembolsarse o
-    prestarse fondos de forma circular para simular pagos legítimos (por ejemplo, disfrazar un beneficio indebido como
-    reembolsos sucesivos). Este patrón indica potencial colusión, ocultamiento de regalos u otras prácticas que vulneran las
-    políticas de conflicto de interés.
-  - **¿Qué columnas devuelve Q10?** La salida es una tabla ordenada por riesgo máximo del par. Sus campos principales son:
-    - `timeframe`: la ventana solicitada (por ejemplo, `"todo_el_tiempo"`). Se agrega al final del proceso para dejar claro
-      el horizonte evaluado.
-    - `par_bidir`: el identificador del par en ambos sentidos (`emisor⇄receptor`). Se genera ordenando los identificadores de
-      cada transacción para que `A→B` y `B→A` queden agrupados.
-    - `racha_max_yo_yo`: la racha consecutiva más larga de transacciones marcadas como Yo-Yo dentro del par. Se calcula al
-      recorrer cronológicamente las banderas `sig_yoyo` y contar la racha más larga antes de que aparezca una transacción sin
-      bandera.
-    - `tx_yo_yo_totales`: número total de transacciones con `sig_yoyo=True` para el par. Es simplemente el conteo de filas
-      etiquetadas como Yo-Yo después de aplicar la bandera original o la heurística de ida y vuelta.
-    - `meses_con_yo_yo`: cantidad de meses distintos en los que se observaron transacciones Yo-Yo. Agrupa el mes (`month_id`)
-      de cada transacción marcada y cuenta los únicos.
-    - `riesgo_max_par` y `riesgo_promedio_par`: resumen del riesgo histórico del par provenientes de `reports["par_personas"]`.
-      Si no hay datos, ambos se rellenan con `0.0` tras combinar la tabla de rachas con la de riesgo por par.
-    - `riesgo_max_yo_yo` y `riesgo_promedio_yo_yo`: máximo y promedio de `risk_score` solo entre las transacciones
-      identificadas como Yo-Yo. Si no hay riesgos asociados, se devuelven `0.0`.
-    - `monto_total_yo_yo` y `monto_promedio_yo_yo`: suma y promedio del `movement_amount` exclusivamente en las transacciones
-      Yo-Yo del par. Permiten dimensionar si la racha representa montos relevantes para las políticas de COI.
-    - `interpretabilidad`: texto legible que condensa racha, número de transacciones, meses y riesgos, además de indicar si se
-      relajaron umbrales o se utilizó una heurística en ausencia de `sig_yoyo`.
-  - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos consecutivos, por defecto `2`); `risk_threshold`
-    (riesgo mínimo del par, por defecto `1.8`).
+  - **¿Qué detecta?** Pares de personas que se envían dinero ida y vuelta en cuestión de horas o días, como si se estuvieran pasando la misma “canasta” una y otra vez.
+  - **Ejemplo corto:** Ana envía 10 peras a Bruno y minutos después Bruno le regresa 10 manzanas. Si repiten el intercambio varias veces, parece actividad normal, pero en realidad es el mismo dinero rotando.
+  - **¿Cómo lo hace?** Busca primero la bandera `sig_yoyo`. Si no existe, compara cada transacción con su reversa en ventanas de 8, 24 y 72 horas o, como último recurso, verifica que ambas direcciones estén activas. Después cruza con el historial de riesgo del par para priorizar las rachas largas y con puntajes altos.
+  - **Columnas clave para interpretar:** `timeframe` (ventana analizada), `par_bidir` (quiénes participan), `racha_max_yo_yo` (cuántas veces seguidas se repite), `tx_yo_yo_totales` y `meses_con_yo_yo` (frecuencia), `riesgo_max_par` / `riesgo_promedio_par` (historial del par), `riesgo_max_yo_yo` / `riesgo_promedio_yo_yo` (riesgo solo de la racha), `monto_total_yo_yo` / `monto_promedio_yo_yo` (tamaño del flujo) e `interpretabilidad` (resumen en español que explica todo).
+  - **Parámetros clave:** `timeframe`; `min_consecutive` (mínimo de eventos seguidos, 2 por defecto); `risk_threshold` (riesgo mínimo del par, 1.8 por defecto).
   - **Ejemplo sencillo:**
     ```python
     import pandas as pd
@@ -410,13 +377,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 - **Q11 – Montos pegados a umbrales regulatorios** (`question11_near_threshold_structuring`):
-  - **Metodología:** procesa `reports["transaccion"][timeframe]` para identificar pares con bandera `sig_near_thr` y deltas
-    pequeños (`feat_delta_near_thr`) respecto a umbrales regulatorios. Si la métrica falta, calcula automáticamente la distancia
-    al umbral más cercano dentro del conjunto validado de montos relevantes: 500, 750, 1 000, 1 500, 2 000, 3 000, 5 000, 7 500,
-    10 000, 15 000 y 20 000 unidades monetarias. El algoritmo verifica que las transacciones queden dentro del `delta_limit`
-    configurado y consolida meses con recurrencia, montos totales y riesgo máximo del par.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con recurrencia, por defecto `3`); `delta_limit` (diferencia
-    máxima al umbral, por defecto `10.0`).
+  - **¿Qué detecta?** Pares que mueven dinero muy cerca de límites regulatorios (500, 750, 1 000, 1 500, 2 000, 3 000, 5 000, 7 500, 10 000, 15 000 o 20 000 unidades) como si intentaran esquivar la supervisión sin pasarse del tope.
+  - **¿Cómo lo hace?** Busca la bandera `sig_near_thr` y el delta `feat_delta_near_thr`. Si faltan, calcula qué tan lejos está cada transacción del umbral más cercano y se queda con las que caen dentro del `delta_limit` (±10 por defecto). Luego agrupa por mes para ver recurrencia, montos acumulados y riesgo máximo del par.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con hallazgos, 3 por defecto); `delta_limit` (diferencia máxima permitida respecto al umbral, 10.0 por defecto).
   - **Validación de umbrales:**
     ```python
     from experiment_questions import question11_near_threshold_structuring
@@ -443,17 +406,11 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 - **Q12 – Smurfing crónico** (`question12_smurfing_chronic`):
-  - **¿Qué es “smurfing”?** Imagina que alguien necesita mover 10 000 $ pero existe un semáforo que revisa cada depósito y prende una alarma si una sola operación supera ese monto. En lugar de hacer un depósito grande, la persona reparte el dinero en muchas transferencias chiquitas (por ejemplo, cinco depósitos de 2 000 $ en la misma semana). Vistas individualmente, las transferencias parecen inocentes; vistas juntas, suman lo mismo que el depósito grande que intentaban esconder. Esa técnica de fraccionar operaciones en porciones pequeñas para evadir controles es lo que llamamos smurfing.
-  - **Definición exacta en el código:** el detector `SmurfingDetector` revisa cada par emisor→receptor ordenando las transferencias por fecha. Dentro de una ventana móvil de **7 días** (`smurf_window_days`), calcula la suma de los montos y el monto máximo individual. Marca las transacciones como `sig_smurf = True` cuando la suma dentro de la ventana alcanza alguno de los umbrales configurados (`smurf_thresholds = [10 000, 20 000]`) **y** ninguna transferencia individual llega a ese mismo umbral. En pocas palabras, etiquetamos como smurf a los bloques de depósitos pequeños que, juntos y en pocos días, cruzan los 10 000 $ o los 20 000 $ sin que una sola operación lo haga.
-  - **Metodología:** parte de `reports["transaccion"][timeframe]` y la bandera `sig_smurf` para localizar pares con depósitos fragmentados pequeños a lo largo de varios meses. Si no hay banderas, usa cuantiles por par (umbral 25 %) para etiquetar montos reducidos, reconstruye la alerta y estima tendencias de riesgo promedio y máximo por mes.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con smurfing, por defecto `3`). Sirve para filtrar únicamente los pares que exhiben recurrencia: por ejemplo, con `min_months=4` solo se reportarán pares con al menos cuatro meses diferentes donde aparezca smurfing. Si un par tuvo smurfing en enero, febrero y abril (tres meses distintos) y nada en el resto del año, `meses_con_smurf = 3`; al ejecutar `question12_smurfing_chronic(..., min_months=4)` quedará excluido porque no alcanza los cuatro meses solicitados.
-  - **Columnas de salida relevantes:**
-    - `meses_con_smurf`: cantidad de meses únicos (`month_id`) donde hubo al menos una transacción marcada con `sig_smurf`. En el código se obtiene con `nunique` sobre los meses del par; si hubo eventos en enero, marzo y abril, el resultado es `3` aunque en enero haya 10 operaciones y en marzo solo 1.
-    - `tx_smurf_totales`: suma de todas las transacciones etiquetadas como smurf en esos meses. Primero se calcula `tx_smurf_mes = count(movement_amount)` por par y mes, y luego se suman todos los `tx_smurf_mes` del par (`sum`).
-    - `monto_smurf_total`: suma de los montos (`movement_amount`) asociados a `sig_smurf`. Igual que en el punto anterior, se acumula `monto_mes = sum(movement_amount)` por mes y, después, la consulta agrega todos los `monto_mes` del par.
-    - `riesgo_promedio_mes`: promedio del riesgo mensual (`risk_score`) una vez ordenados cronológicamente los meses del par. Internamente se calcula el promedio de `riesgo_prom_mes = mean(risk_score)` por mes y luego se promedia ese vector.
-    - `riesgo_max`: valor máximo de `risk_score` observado en los meses con smurfing (`riesgo_max_mes = max(risk_score)` y luego se elige el máximo global).
-    - `tendencia_riesgo`: clasificación textual ("al alza", "a la baja" o "estable") derivada de comparar el riesgo promedio del primer y último mes (`riesgo_inicio` vs. `riesgo_fin`).
+  - **¿Qué detecta?** Pares que dividen depósitos grandes en muchas transferencias pequeñas (por ejemplo, cinco pagos de 2 000 $) para evitar que un control detecte de golpe los 10 000 $ o 20 000 $ que realmente están moviendo.
+  - **Analogía rápida:** Es como si alguien quisiera pasar un costal de arena por una báscula con límite de 10 kg. En vez de cargar un solo costal de 30 kg (que dispararía la alarma), reparte la arena en tres costales de 10 kg y los pasa uno a la vez.
+  - **¿Cómo lo hace el código?** El `SmurfingDetector` ordena las transacciones por par emisor→receptor y, dentro de una ventana móvil de 7 días (`smurf_window_days`), suma los montos. Si la suma alcanza 10 000 $ o 20 000 $ (`smurf_thresholds = [10 000, 20 000]`) sin que ninguna transacción individual cruce ese umbral, marca `sig_smurf = True`. Cuando la bandera no existe, la función recalcula la alerta usando cuantiles (umbral 25 %) para identificar montos pequeños repetidos y reconstruir la señal.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con smurfing, 3 por defecto). Este filtro asegura que solo aparezcan pares con recurrencia. Ejemplo: si un par tiene smurfing en enero, febrero y abril, `meses_con_smurf = 3`. Al correr `question12_smurfing_chronic(..., min_months=4)` quedará fuera porque no llega a cuatro meses diferentes.
+  - **Columnas de salida relevantes:** `meses_con_smurf` (en cuántos meses distintos apareció la señal), `tx_smurf_totales` (cuántas transacciones pequeñas participaron), `monto_smurf_total` (suma de montos), `riesgo_promedio_mes` y `riesgo_max` (niveles de riesgo), además de `tendencia_riesgo` para resumir si la alerta va al alza, a la baja o se mantiene estable.
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question12_smurfing_chronic
@@ -473,8 +430,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q13 – Préstamos incumplidos con ráfagas de frecuencia** (`question13_bad_loans_with_frequency`):
-  - **Metodología:** inspecciona banderas `sig_loan_bad_repay` y `sig_freq` dentro de `reports["transaccion"][timeframe]`. Calcula coincidencias mensuales de préstamos con repago ≤50% y eventos de alta frecuencia; cuando faltan banderas, emplea heurísticas bidireccionales para estimar préstamos, reembolsos y umbrales de frecuencia. Agrega meses coincidentes, montos y riesgos.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos de coincidencia, por defecto `3`).
+  - **¿Qué detecta?** Pares donde existen préstamos que casi no se pagan (≤50 %) y, al mismo tiempo, ráfagas de transacciones muy seguidas.
+  - **¿Cómo lo hace?** Busca las banderas `sig_loan_bad_repay` y `sig_freq` por mes; si no están disponibles, estima quién presta, quién devuelve y qué tan seguido ocurren los pagos usando heurísticas en ambos sentidos. Luego cuenta los meses donde coinciden ambas señales y resume montos y riesgos.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con coincidencia, 3 por defecto).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question13_bad_loans_with_frequency
@@ -494,8 +452,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q14 – Pagos recurrentes tipo nómina** (`question14_recurrent_payroll`):
-  - **Metodología:** utiliza `reports["transaccion"][timeframe]` y la bandera `sig_recurrent` para agrupar pagos emitidos cerca de un mismo día de corte. Identifica meses consecutivos con comportamiento recurrente y calcula totales, promedios y número de pagos, relajando banderas cuando es necesario para mantener cobertura.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses consecutivos mínimos, por defecto `3`).
+  - **¿Qué detecta?** Pagos que salen casi siempre en las mismas fechas y montos, imitando una nómina paralela.
+  - **¿Cómo lo hace?** Usa la bandera `sig_recurrent` para agrupar pagos que ocurren alrededor del mismo día de corte. Luego busca meses consecutivos con ese patrón y calcula totales, promedios y cantidad de pagos. Si faltan banderas, relaja el criterio para no perder posibles nóminas escondidas.
+  - **Parámetros clave:** `timeframe`; `min_months` (meses consecutivos mínimos, 3 por defecto).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question14_recurrent_payroll
@@ -515,8 +474,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q15 – Clusters con señales coordinadas** (`question15_coordinated_cluster_signals`):
-  - **Metodología:** revisa `reports["clusters_personas"][timeframe]` y consolida las tasas de señales priorizadas (yo-yo, smurf, ciclos, quid y referencias reutilizadas). Normaliza conteos y montos para ordenar los clusters por número de señales activas, riesgo máximo y volumen total, generando un texto que resalta la persona más desbalanceada y el detalle porcentual de cada señal.
-  - **Parámetros clave:** `timeframe`; `top_n` (número máximo de clusters a devolver, 10 por defecto en la función base).
+  - **¿Qué detecta?** Grupos de personas conectadas entre sí que acumulan varias señales (yo-yo, smurf, quid, etc.) al mismo tiempo.
+  - **¿Cómo lo hace?** Lee `reports["clusters_personas"][timeframe]`, suma cuántas señales activas tiene cada cluster, normaliza los montos y ordena los resultados por número de señales, riesgo máximo y volumen. El texto final resalta a la persona más desbalanceada y explica qué porcentaje aporta cada señal.
+  - **Parámetros clave:** `timeframe`; `top_n` (número de clusters a mostrar, 10 por defecto).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question15_coordinated_cluster_signals
@@ -536,8 +496,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q16 – Transacciones con múltiples señales simultáneas** (`question16_multisignal_transactions`):
-  - **Metodología:** analiza `reports["transaccion"][timeframe]` buscando operaciones que acumulen varias banderas (jerarquía, yo-yo, smurf, near-threshold, quid y cambio brusco). Prioriza las que alcanzan al menos tres señales activas, relajando el umbral si no hay suficientes resultados, y redacta interpretabilidad con monto, riesgo, relación declarada y descripción.
-  - **Parámetros clave:** `timeframe`; `top_n` (máximo de transacciones listadas, 25 por defecto).
+  - **¿Qué detecta?** Operaciones individuales que prenden varias alarmas a la vez (por ejemplo, jerarquía + yo-yo + smurf).
+  - **¿Cómo lo hace?** Revisa `reports["transaccion"][timeframe]` y cuenta cuántas banderas se activan por transacción (jerarquía, yo-yo, smurf, near-threshold, quid y cambios bruscos). Prioriza las que tienen tres o más señales y, si hay pocos casos, baja el umbral para mostrar ejemplos representativos.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de transacciones en el listado, 25 por defecto).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question16_multisignal_transactions
@@ -557,8 +518,9 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q17 – Perfiles NLP sospechosos por persona** (`question17_nlp_person_profiles`):
-  - **Metodología:** combina `reports["persona"][timeframe]` y `reports["persona_concepto"][timeframe]` para cuantificar transacciones NLP sospechosas, conceptos únicos y riesgo promedio por persona. Calcula proporciones respecto al total de movimientos, integra los principales conceptos detectados y evalúa el flujo neto para contextualizar el comportamiento descrito.
-  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas priorizadas, 15 por defecto).
+  - **¿Qué detecta?** Personas que concentran transacciones con conceptos NLP sospechosos y riesgo elevado.
+  - **¿Cómo lo hace?** Mezcla la tabla de personas con la de conceptos para contar transacciones sospechosas, conceptos distintos y riesgo promedio por persona. También calcula qué porcentaje representan sobre el total de movimientos y muestra los conceptos más frecuentes junto con el flujo neto para dar contexto.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas en el ranking, 15 por defecto).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question17_nlp_person_profiles
@@ -578,9 +540,10 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q18 – Personas con riesgo agregado y banderas** (`question18_user_risk_scores`):
-  - **Metodología:** utiliza `reports["persona"][timeframe]` para combinar el riesgo promedio (`risk_avg_person`) con el flujo neto (`sum_emit - sum_recv`), el desbalance mensual (`desbalance_persona_*`) y las tasas de señales por persona. Calcula un ranking priorizando riesgo, magnitud del desbalance y banderas activas, además de sintetizar las tres señales más destacadas por frecuencia relativa.
-  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas en el ranking, 25 por defecto).
-  - **Salida en CLI:** el resumen estándar ahora lista hasta 10 filas (y sus interpretabilidades) para Q18, incluso si las personas adicionales tienen riesgo promedio 0.
+  - **¿Qué detecta?** El ranking general de personas con mayor riesgo promedio, desbalances fuertes y señales activas.
+  - **¿Cómo lo hace?** Usa `reports["persona"][timeframe]` para combinar `risk_avg_person`, el flujo neto (`sum_emit - sum_recv`), los desbalances mensuales (`desbalance_persona_*`) y las tasas de banderas por persona. Con esa mezcla arma un ranking, destaca las tres señales más frecuentes y genera texto explicativo.
+  - **Parámetros clave:** `timeframe`; `top_n` (máximo de personas a mostrar, 25 por defecto).
+  - **Salida en CLI:** el resumen estándar imprime hasta 10 filas con sus interpretabilidades aunque algunas tengan riesgo promedio 0.
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question18_user_risk_scores
@@ -612,11 +575,11 @@ python -m coi_fraud --csv ./mis_transacciones.csv --out ./forensic_outputs
 
 | Término | Definición resumida | Cómo se calcula/activa |
 | --- | --- | --- |
-| **Quid Pro Quo** (`sig_quid_pro_quo`, `feat_quid_score`, `feat_quid_value_vs_load_days`, `feat_quid_rel_label`) | Señal que busca intercambios jerárquicos con aprobaciones y compensaciones potencialmente recíprocas en ventanas cortas. | Combina relaciones manager-subordinado, coincidencias textuales de aprobaciones/compensaciones, montos atípicos por emisor, cercanía a umbrales y desfases carga vs. valor para generar un puntaje; al superar el umbral configura la bandera y conserva metadatos normalizados por par.【F:coi_fraud/features/quid.py†L176-L287】 |
-| **Yo-Yo** (`sig_yoyo`) | Marca pares que envían y reciben montos similares en rachas de ida y vuelta. | Agrupa pares bidireccionales, ordena por tiempo y activa la bandera cuando encuentra transferencias opuestas dentro de una ventana de horas y con diferencias menores a una tolerancia porcentual.【F:coi_fraud/features/yoyo.py†L7-L43】 |
-| **Smurfing** (`sig_smurf`) | Identifica depósitos fragmentados en montos pequeños que, sumados, superan umbrales dentro de un periodo corto. | Ordena las transacciones por par, calcula ventanas deslizantes de días y enciende la señal si el acumulado rebasa los umbrales configurados sin que algún monto individual los exceda.【F:coi_fraud/features/smurf.py†L7-L48】 |
-| **Change Point / Nuevo enlace** (`sig_pair_change_point`, `sig_pair_new_edge`, `feat_pair_month_amount_ratio`) | Detecta saltos abruptos o la aparición repentina de relaciones entre pares. | Resume montos y conteos mensuales por par, compara contra el mes anterior y marca picos grandes o inicios con suficiente separación temporal para determinar cambios estructurales.【F:coi_fraud/features/change_points.py†L10-L140】 |
-| **NLP corporativo** (`nlp_concepto_sospechoso`, `feat_nlp_risk_points`, `feat_nlp_coi_score`) | Clasificación automática de descripciones que sugiere conceptos sospechosos o eventos corporativos relevantes. | Ejecuta el modelo `nlp_mx_etiquetar_transacciones_pro` sobre la descripción y la relación declarada, devolviendo conceptos, puntajes de riesgo y atributos lingüísticos asociados a cada transacción.【F:coi_fraud/features/nlp_mx.py†L7-L22】 |
-| **Desbalanceo por persona** (`desbalance_persona_monto_neto`, `desbalance_persona_meses_*`) | Mide diferencias persistentes entre lo emitido y recibido por cada persona. | Calcula el neto emitido vs. recibido, razones, z-scores y meses con extremos estadísticos para cuantificar la magnitud y recurrencia del desbalance.【F:coi_fraud/aggregate/persons.py†L491-L595】 |
-| **Reutilización de referencias** (`feat_reference_norm`, `sig_reference_reuse`) | Señala referencias de pago reutilizadas por múltiples pares en poco tiempo. | Normaliza textos de referencia, filtra longitudes mínimas y activa la señal cuando un identificador aparece en al menos dos pares dentro de la ventana de días configurada.【F:coi_fraud/features/reference_reuse.py†L31-L78】 |
-| **Cercanía a umbrales** (`sig_near_thr`, `feat_delta_near_thr`) | Destaca montos que caen muy cerca de límites regulatorios predefinidos. | Calcula la distancia mínima a la lista de umbrales y marca la transacción si el valor cae dentro del delta permitido, almacenando la diferencia absoluta para referencia.【F:coi_fraud/features/near_threshold.py†L4-L17】 |
+| **Quid Pro Quo** (`sig_quid_pro_quo`, `feat_quid_score`, `feat_quid_value_vs_load_days`, `feat_quid_rel_label`) | Banderas que alertan sobre posibles intercambios de favores entre jefes y subordinados. | Combina relaciones jerárquicas, palabras clave de aprobaciones o compensaciones, montos fuera de lo normal, cercanía a umbrales y desfases entre carga y valor. Con todo eso calcula un puntaje; si rebasa el umbral, activa la señal y guarda los datos por par.【F:coi_fraud/features/quid.py†L176-L287】 |
+| **Yo-Yo** (`sig_yoyo`) | Detecta pares que se envían dinero de ida y vuelta con montos casi iguales. | Agrupa el par en ambas direcciones, ordena por tiempo y prende la bandera cuando identifica transferencias opuestas en pocas horas con diferencias mínimas.【F:coi_fraud/features/yoyo.py†L7-L43】 |
+| **Smurfing** (`sig_smurf`) | Señala depósitos divididos en partes pequeñas que, sumados, cruzan un umbral. | Ordena las operaciones por par, recorre ventanas de días y enciende la señal si el acumulado supera los límites configurados sin que ningún pago individual lo haga.【F:coi_fraud/features/smurf.py†L7-L48】 |
+| **Change Point / Nuevo enlace** (`sig_pair_change_point`, `sig_pair_new_edge`, `feat_pair_month_amount_ratio`) | Advierte cuando surge un par nuevo o cambia drásticamente su nivel de actividad. | Resume montos y conteos mensuales por par, los compara con el mes anterior y marca picos grandes o arranques que aparecen tras un buen tiempo sin relación.【F:coi_fraud/features/change_points.py†L10-L140】 |
+| **NLP corporativo** (`nlp_concepto_sospechoso`, `feat_nlp_risk_points`, `feat_nlp_coi_score`) | Clasifica descripciones para encontrar términos sospechosos en lenguaje cotidiano. | Ejecuta el modelo `nlp_mx_etiquetar_transacciones_pro` sobre la descripción y la relación declarada, devolviendo conceptos, puntajes de riesgo y detalles lingüísticos para cada transacción.【F:coi_fraud/features/nlp_mx.py†L7-L22】 |
+| **Desbalanceo por persona** (`desbalance_persona_monto_neto`, `desbalance_persona_meses_*`) | Resume quién envía mucho más de lo que recibe (o al revés) de manera sostenida. | Calcula el neto emitido vs. recibido, razones estadísticas y meses extremos para medir la magnitud y la constancia del desbalance.【F:coi_fraud/aggregate/persons.py†L491-L595】 |
+| **Reutilización de referencias** (`feat_reference_norm`, `sig_reference_reuse`) | Marca referencias de pago copiadas entre distintos pares en poco tiempo. | Limpia y normaliza los textos, descarta referencias muy cortas y activa la señal cuando el mismo identificador aparece en dos o más pares dentro de la ventana configurada.【F:coi_fraud/features/reference_reuse.py†L31-L78】 |
+| **Cercanía a umbrales** (`sig_near_thr`, `feat_delta_near_thr`) | Señala montos que quedan a pocos pesos/unidades de un límite oficial. | Calcula la distancia mínima a la lista de umbrales y activa la bandera si el valor cae dentro del delta permitido, guardando cuánto faltó para llegar al límite.【F:coi_fraud/features/near_threshold.py†L4-L17】 |
