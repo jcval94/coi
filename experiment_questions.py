@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import re
+import unicodedata
 from pathlib import Path
 from textwrap import fill
 from typing import Any, Callable, Dict, Iterable, Mapping, Literal, Tuple
@@ -315,6 +316,193 @@ def _get_section(reports: Mapping[str, Any], section: str, timeframe: str) -> pd
     return pd.DataFrame()
 
 
+def _normalize_alias_token(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]", "", normalized.lower())
+
+
+def _standardize_columns(
+    df: pd.DataFrame,
+    alias_map: Mapping[str, Iterable[str]],
+) -> pd.DataFrame:
+    if df.empty or not alias_map:
+        return df
+
+    rename_map: dict[str, str] = {}
+    normalized_columns = {
+        _normalize_alias_token(column): column for column in df.columns
+    }
+
+    for target, aliases in alias_map.items():
+        if target in df.columns:
+            continue
+
+        search_values = [target, *aliases]
+        found_column: str | None = None
+
+        for candidate in search_values:
+            candidate_key = _normalize_alias_token(candidate)
+            if candidate_key in normalized_columns:
+                found_column = normalized_columns[candidate_key]
+                break
+
+        if found_column is None:
+            for candidate in search_values:
+                candidate_key = _normalize_alias_token(candidate)
+                if not candidate_key:
+                    continue
+                matches = [
+                    column
+                    for column in df.columns
+                    if candidate_key in _normalize_alias_token(column)
+                ]
+                if len(matches) == 1:
+                    found_column = matches[0]
+                    break
+
+        if found_column and found_column not in rename_map:
+            rename_map[found_column] = target
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
+
+PERSONA_COLUMN_ALIASES: Dict[str, tuple[str, ...]] = {
+    "persona": (
+        "persona_id",
+        "persona_norm",
+        "persona_normalizada",
+        "persona_codigo",
+        "empleado_id",
+        "user_id",
+        COL_RECEIVER_ID,
+    ),
+    "risk_avg_person": (
+        "risk_avg",
+        "riesgo_promedio_persona",
+        "riesgo_avg_persona",
+        "risk_score_avg",
+        "riesgo_promedio",
+    ),
+    "movements": (
+        "movimientos",
+        "total_movimientos",
+        "n_movimientos",
+        "tx_totales",
+        "total_tx",
+    ),
+    "n_tx_emit": (
+        "tx_emitidas",
+        "tx_enviadas",
+        "n_tx_enviadas",
+        "tx_emisor",
+        "transacciones_emitidas",
+    ),
+    "sum_emit": (
+        "monto_emitido",
+        "monto_enviado",
+        "suma_emitida",
+        "monto_tx_emitidas",
+    ),
+    "n_tx_recv": (
+        "tx_recibidas",
+        "n_tx_recibidas",
+        "tx_receptor",
+        "transacciones_recibidas",
+    ),
+    "sum_recv": (
+        "monto_recibido",
+        "suma_recibida",
+        "monto_tx_recibidas",
+        "monto_recibe",
+    ),
+    "net_flow": (
+        "flujo_neto",
+        "neto",
+        "neto_persona",
+        "balance_neto",
+    ),
+    "desbalance_persona_monto_neto": (
+        "desbalance_monto_neto",
+        "monto_neto_desbalance",
+        "desbalance_neto_persona",
+    ),
+    "desbalance_persona_meses_totales": (
+        "desbalance_meses_totales",
+        "meses_desbalance_persona",
+        "total_meses_desbalance",
+    ),
+    "desbalance_persona_tasa_meses_envia_extremo": (
+        "desbalance_tasa_envia_extremo",
+        "tasa_envio_extremo",
+        "tasa_meses_envia_extremo",
+    ),
+    "desbalance_persona_tasa_meses_recibe_extremo": (
+        "desbalance_tasa_recibe_extremo",
+        "tasa_recepcion_extremo",
+        "tasa_meses_recibe_extremo",
+    ),
+    "flags_activas": (
+        "banderas_activas",
+        "flags_activos",
+        "flags_persona_activas",
+    ),
+    "flag_rate_max": (
+        "tasa_flag_max",
+        "tasa_bandera_max",
+        "flag_rate_maximo",
+        "max_tasa_flag",
+    ),
+    "banderas_destacadas": (
+        "banderas_principales",
+        "banderas_relevantes",
+        "banderas_top",
+    ),
+    "casuistica_score_total": (
+        "casuistica_puntaje_total",
+        "score_total_casuistica",
+        "casuistica_score_sum",
+    ),
+    "casuistica_score_promedio": (
+        "casuistica_puntaje_promedio",
+        "score_promedio_casuistica",
+    ),
+    "casuistica_resumen": (
+        "casuistica_resumen_texto",
+        "resumen_casuistica",
+        "detalle_casuistica",
+    ),
+}
+
+
+TRANSACTION_COLUMN_ALIASES: Dict[str, tuple[str, ...]] = {
+    COL_RECEIVER_ID: (
+        "persona",
+        "persona_id",
+        "destinatario_id",
+        "receptor_id",
+    ),
+    COL_AMOUNT: (
+        "monto",
+        "monto_movimiento",
+        "amount",
+        "monto_tx",
+    ),
+    "fecha_hora_ts": (
+        "fecha_hora",
+        "fecha_operacion",
+        "timestamp",
+        "fecha_tx",
+    ),
+    "month_id": (
+        "mes",
+        "mes_id",
+        "month",
+    ),
+}
+
+
 def _filter_manager_subordinate(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or COL_RELATION not in df:
         return df.iloc[0:0].copy()
@@ -469,7 +657,9 @@ def _collect_sender_lists(
 ) -> dict[str, list[str]]:
     """Genera listas de emisores asociados a cada persona receptora."""
 
-    tx = _get_section(reports, "transaccion", timeframe)
+    tx = _standardize_columns(
+        _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
+    )
     if tx.empty:
         return {}
 
@@ -629,7 +819,9 @@ def question1_manager_nlp(
         ``"nlp_concepto_sospechoso"`` contiene una lista de conceptos únicos
         detectados para cada par y periodo.
     """
-    tx = _get_section(reports, "transaccion", timeframe)
+    tx = _standardize_columns(
+        _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
+    )
     if tx.empty:
         return pd.DataFrame(
             columns=[
@@ -2049,7 +2241,9 @@ def question7_net_imbalance(
         Tabla con personas desbalanceadas, métricas netas y comentarios
         interpretables.
     """
-    personas = _get_section(reports, "persona", timeframe)
+    personas = _standardize_columns(
+        _get_section(reports, "persona", timeframe), PERSONA_COLUMN_ALIASES
+    )
     if personas.empty:
         return pd.DataFrame(
             columns=[
@@ -2157,7 +2351,9 @@ def question8_case13_new_employees(
             ]
         )
 
-    tx = _get_section(reports, "transaccion", timeframe)
+    tx = _standardize_columns(
+        _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
+    )
     new_months_threshold = _resolve_tenure_months(
         tx,
         "receptor_antiguedad_anios",
@@ -4358,7 +4554,9 @@ def question18_user_risk_scores(
 ) -> pd.DataFrame:
     """Prioriza personas por riesgo promedio, desbalance y señales activas."""
 
-    personas = _get_section(reports, "persona", timeframe)
+    personas = _standardize_columns(
+        _get_section(reports, "persona", timeframe), PERSONA_COLUMN_ALIASES
+    )
 
     columns = [
         "timeframe",
@@ -4425,7 +4623,9 @@ def question18_user_risk_scores(
     std_monto_map: dict[str, float] = {}
     std_dia_map: dict[str, float] = {}
 
-    tx = _get_section(reports, "transaccion", timeframe)
+    tx = _standardize_columns(
+        _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
+    )
     required_tx_cols = {COL_RECEIVER_ID, COL_AMOUNT, "fecha_hora_ts", "month_id"}
     if not tx.empty and required_tx_cols.issubset(tx.columns):
         pagos = tx[list(required_tx_cols)].copy()
