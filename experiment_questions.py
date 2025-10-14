@@ -502,12 +502,52 @@ TRANSACTION_COLUMN_ALIASES: Dict[str, tuple[str, ...]] = {
     ),
 }
 
+MANAGER_ID_COLUMNS: tuple[str, ...] = tuple(f"manager_{i}_user_id" for i in range(1, 6))
+
 
 def _filter_manager_subordinate(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or COL_RELATION not in df:
+    if df.empty:
         return df.iloc[0:0].copy()
-    mask = df[COL_RELATION].fillna("").astype(str).str.contains("manager", case=False)
-    return df.loc[mask].copy()
+
+    if COL_RELATION in df:
+        mask = df[COL_RELATION].fillna("").astype(str).str.contains(
+            "manager", case=False
+        )
+        return df.loc[mask].copy()
+
+    required = {COL_SENDER_ID, COL_RECEIVER_ID}
+    if not required.issubset(df.columns):
+        return df.iloc[0:0].copy()
+
+    manager_cols = [col for col in MANAGER_ID_COLUMNS if col in df.columns]
+    if not manager_cols:
+        return df.iloc[0:0].copy()
+
+    work = df.copy()
+
+    def _normalize(series: pd.Series) -> pd.Series:
+        return series.astype("string").fillna("").str.strip()
+
+    sender = _normalize(work[COL_SENDER_ID])
+    receiver = _normalize(work[COL_RECEIVER_ID])
+    manager_matrix = pd.DataFrame(
+        {col: _normalize(work[col]) for col in manager_cols}, index=work.index
+    )
+
+    manager_is_sender = manager_matrix.eq(sender, axis=0).any(axis=1)
+    manager_is_receiver = manager_matrix.eq(receiver, axis=0).any(axis=1)
+
+    inferred_relation = pd.Series(pd.NA, index=work.index, dtype="string")
+    inferred_relation.loc[manager_is_sender] = "manager_del_receptor"
+    inferred_relation.loc[manager_is_receiver] = "manager_del_emisor"
+
+    mask = inferred_relation.notna()
+    if not mask.any():
+        return df.iloc[0:0].copy()
+
+    result = work.loc[mask].copy()
+    result[COL_RELATION] = inferred_relation.loc[mask]
+    return result
 
 
 def _tokenize_concepts(value: Any) -> Iterable[str]:
