@@ -327,7 +327,7 @@ def plot_q5_reference_reuse(
         )
 
     work = work.sort_values(
-        ["emisores_unicos", "monto_total", "tx_count"],
+        ["monto_total", "emisores_unicos", "tx_count"],
         ascending=[False, False, False],
     ).head(top_n)
     work["label"] = (
@@ -336,12 +336,35 @@ def plot_q5_reference_reuse(
         + work.get("nlp_concepto_sospechoso", pd.Series(dtype="object")).fillna("SIN_CONCEPTO").astype(str)
     )
 
-    sns.barplot(data=work, x="emisores_unicos", y="label", hue="meses_distintos", ax=axis)
+    cmap = sns.color_palette("viridis", as_cmap=True)
+    tx_counts = work["tx_count"].astype(float)
+    vmin = (tx_counts.min() - 0.5) if tx_counts.size else 0
+    vmax = (tx_counts.max() + 0.5) if tx_counts.size else 1
+    norm = colors.Normalize(vmin=vmin, vmax=vmax)
+    bar_colors = cmap(norm(tx_counts))
+    bars = axis.barh(work["label"], work["monto_total"], color=bar_colors)
+
+    max_total = work["monto_total"].max() if not work["monto_total"].empty else 0
+    axis.set_xlim(0, max_total * 1.1 if max_total > 0 else 1)
+    for bar, amount in zip(bars, work["monto_total"]):
+        width = bar.get_width()
+        axis.text(
+            width,
+            bar.get_y() + bar.get_height() / 2,
+            f" {amount:,.2f}",
+            va="center",
+            ha="left",
+        )
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    colorbar = axis.figure.colorbar(sm, ax=axis)
+    colorbar.set_label("Número de transacciones")
+
     _apply_plot_metadata(axis, "q5_reference_reuse", timeframe)
-    axis.set_xlabel("Emisores distintos")
+    axis.set_xlabel("Monto total")
     axis.set_ylabel("Receptor ← concepto")
-    if axis.get_legend() is not None:
-        axis.legend(title="Meses con el concepto")
+    axis.invert_yaxis()
     return axis
 
 

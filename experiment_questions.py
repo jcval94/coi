@@ -252,6 +252,23 @@ def _combine_unique_categories(values: Iterable[Any]) -> list[str]:
     return ordered
 
 
+def _collect_unique_text_list(values: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value is None or value is pd.NA:
+            continue
+        if isinstance(value, float) and pd.isna(value):
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        if text not in seen:
+            seen.add(text)
+            ordered.append(text)
+    return ordered
+
+
 def _max_text_length(values: Iterable[Any]) -> int:
     lengths = []
     for value in values:
@@ -1102,16 +1119,22 @@ def question5_reference_reuse(
         "nivel_respuesta",
         COL_RECEIVER_ID,
         "nlp_concepto_sospechoso",
-        "emisores_unicos",
-        "emisores_detalle",
-        "meses_distintos",
-        "meses_detalle",
-        "tx_count",
-        "monto_total",
-        "riesgo_promedio",
-        "riesgo_p95",
-        "interpretabilidad",
     ]
+    if include_raw_concept:
+        empty_columns.append("conceptos_crudos")
+    empty_columns.extend(
+        [
+            "emisores_unicos",
+            "emisores_detalle",
+            "meses_distintos",
+            "meses_detalle",
+            "tx_count",
+            "monto_total",
+            "riesgo_promedio",
+            "riesgo_p95",
+            "interpretabilidad",
+        ]
+    )
     if tx.empty:
         return pd.DataFrame(columns=empty_columns)
 
@@ -1120,6 +1143,8 @@ def question5_reference_reuse(
         return pd.DataFrame(columns=empty_columns)
 
     work_columns = list(required_columns.union({COL_AMOUNT, "month_id", "fecha_hora_ts", "risk_score"}))
+    if include_raw_concept:
+        work_columns.append("nlp_concepto_crudo")
     existing_columns = [column for column in work_columns if column in tx.columns]
     work = tx[existing_columns].copy()
     work[COL_SENDER_ID] = work[COL_SENDER_ID].astype("string").str.strip()
@@ -1137,6 +1162,9 @@ def question5_reference_reuse(
 
     work[COL_AMOUNT] = pd.to_numeric(work.get(COL_AMOUNT), errors="coerce")
     work["risk_score"] = pd.to_numeric(work.get("risk_score"), errors="coerce")
+
+    if include_raw_concept:
+        work = _ensure_raw_concept_column(work)
 
     if "month_id" not in work.columns:
         if "fecha_hora_ts" in work.columns:
@@ -1158,21 +1186,28 @@ def question5_reference_reuse(
         }
         return "; ".join(sorted(values))
 
+    aggregations: dict[str, tuple[str, Any]] = {
+        "emisores_unicos": ("_sender_clean", "nunique"),
+        "emisores_detalle": ("_sender_clean", _join_unique),
+        "meses_distintos": ("_month_clean", "nunique"),
+        "meses_detalle": ("_month_clean", _join_unique),
+        "tx_count": (COL_AMOUNT, "count"),
+        "monto_total": (COL_AMOUNT, "sum"),
+        "riesgo_promedio": ("risk_score", "mean"),
+        "riesgo_p95": (
+            "risk_score",
+            lambda s: float(s.dropna().quantile(0.95)) if s.dropna().size else float("nan"),
+        ),
+    }
+    if include_raw_concept:
+        aggregations["conceptos_crudos"] = (
+            "nlp_concepto_crudo",
+            _collect_unique_text_list,
+        )
+
     grouped = (
         work.groupby([COL_RECEIVER_ID, "nlp_concepto_sospechoso"], observed=True)
-        .agg(
-            emisores_unicos=("_sender_clean", "nunique"),
-            emisores_detalle=("_sender_clean", _join_unique),
-            meses_distintos=("_month_clean", "nunique"),
-            meses_detalle=("_month_clean", _join_unique),
-            tx_count=(COL_AMOUNT, "count"),
-            monto_total=(COL_AMOUNT, "sum"),
-            riesgo_promedio=("risk_score", "mean"),
-            riesgo_p95=(
-                "risk_score",
-                lambda s: float(s.dropna().quantile(0.95)) if s.dropna().size else float("nan"),
-            ),
-        )
+        .agg(**aggregations)
         .reset_index()
     )
 
@@ -1189,27 +1224,31 @@ def question5_reference_reuse(
     grouped["nivel_respuesta"] = "concepto_receptor"
     grouped["timeframe"] = timeframe
 
-    grouped["interpretabilidad"] = grouped.apply(
-        lambda row: (
+    if include_raw_concept:
+        grouped["conceptos_crudos"] = grouped["conceptos_crudos"].apply(
+            lambda values: values if isinstance(values, list) else []
+        )
+
+    def _build_interpretability(row: pd.Series) -> str:
+        message = (
             f"Durante '{timeframe}', la persona {_coalesce_str(row.get(COL_RECEIVER_ID), default='sin_receptor')} "
             f"recibió el concepto '{_coalesce_str(row.get('nlp_concepto_sospechoso'), default='SIN_CONCEPTO')}' "
             f"desde {int(row.get('emisores_unicos', 0))} emisores diferentes en "
             f"{int(row.get('meses_distintos', 0))} meses ({row.get('meses_detalle') or 'sin_mes'}), "
             f"sumando {int(row.get('tx_count', 0))} transacciones por {_format_float(row.get('monto_total', 0))}. "
             f"Emisores: {row.get('emisores_detalle') or 'sin_detalle'}."
-            + (
-                f" Riesgo promedio {row.get('riesgo_promedio', float('nan')):.2f}"
-                if pd.notna(row.get('riesgo_promedio'))
-                else ""
-            )
-            + (
-                f" (p95={row.get('riesgo_p95', float('nan')):.2f})"
-                if pd.notna(row.get('riesgo_p95'))
-                else ""
-            )
-        ),
-        axis=1,
-    )
+        )
+        if pd.notna(row.get("riesgo_promedio")):
+            message += f" Riesgo promedio {row.get('riesgo_promedio', float('nan')):.2f}"
+        if pd.notna(row.get("riesgo_p95")):
+            message += f" (p95={row.get('riesgo_p95', float('nan')):.2f})"
+        if include_raw_concept and row.get("conceptos_crudos"):
+            raw_list = ", ".join(row.get("conceptos_crudos") or [])
+            if raw_list:
+                message += f" Conceptos crudos: {raw_list}."
+        return message
+
+    grouped["interpretabilidad"] = grouped.apply(_build_interpretability, axis=1)
 
     grouped = grouped.sort_values(
         ["emisores_unicos", "meses_distintos", "monto_total"],
@@ -1221,6 +1260,10 @@ def question5_reference_reuse(
         "nivel_respuesta",
         COL_RECEIVER_ID,
         "nlp_concepto_sospechoso",
+    ]
+    if include_raw_concept:
+        ordered_columns.append("conceptos_crudos")
+    ordered_columns.extend([
         "emisores_unicos",
         "emisores_detalle",
         "meses_distintos",
@@ -1230,7 +1273,7 @@ def question5_reference_reuse(
         "riesgo_promedio",
         "riesgo_p95",
         "interpretabilidad",
-    ]
+    ])
 
     return grouped.reindex(columns=ordered_columns)
 
