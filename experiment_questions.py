@@ -4554,6 +4554,1592 @@ def question18_user_risk_scores(
         else:
             work[col] = 0.0
 
+    score_labels = {3: "Alto", 2: "Medio", 1: "Bajo"}
+
+    def _normalize_persona_id(value: Any) -> str:
+        text = str(value).strip() if value is not None else ""
+        if not text or text.lower() == "nan":
+            return ""
+        return text
+
+    def _unique_list(values: Iterable[Any]) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for value in values:
+            if isinstance(value, (list, tuple, set)):
+                iterable = value
+            else:
+                iterable = [value]
+            for item in iterable:
+                text = str(item).strip()
+                if not text or text.lower() == "nan":
+                    continue
+                if text not in seen:
+                    seen.add(text)
+                    ordered.append(text)
+        return ordered
+
+    def _ensure_list(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, (tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if value is None:
+            return []
+        if isinstance(value, float) and pd.isna(value):
+            return []
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            inner = text[1:-1]
+            parts = [part.strip().strip("'\"") for part in inner.split(",")]
+            return [part for part in parts if part]
+        return [text]
+
+    def _score_metric_series(
+        series: pd.Series, medium_quantile: float = 0.5, high_quantile: float = 0.9
+    ) -> tuple[pd.Series, dict[str, float]]:
+        metrics = pd.to_numeric(series, errors="coerce").fillna(0.0)
+        positive = metrics[metrics > 0]
+        thresholds = {"medium": 0.0, "high": 0.0}
+        if positive.empty:
+            return pd.Series(1, index=series.index, dtype=int), thresholds
+
+        if len(positive) == 1:
+            medium_threshold = float(positive.iloc[0])
+            high_threshold = float(positive.iloc[0])
+        else:
+            medium_threshold = float(positive.quantile(medium_quantile))
+            high_threshold = float(positive.quantile(high_quantile))
+        if high_threshold < medium_threshold:
+            high_threshold = float(positive.max())
+        if medium_threshold <= 0 < high_threshold:
+            medium_threshold = min(high_threshold, float(positive.median()))
+
+        thresholds = {"medium": medium_threshold, "high": high_threshold}
+
+        def _assign(value: float) -> int:
+            if value <= 0:
+                return 1
+            if high_threshold > 0 and value >= high_threshold:
+                return 3
+            if medium_threshold > 0 and value >= medium_threshold:
+                return 2
+            return 1
+
+        scores = metrics.apply(_assign).astype(int)
+        return scores, thresholds
+
+    def _format_list(values: list[str]) -> str:
+        if not values:
+            return "sin_dato"
+        return ", ".join(values)
+
+    scenario_frames: dict[str, pd.DataFrame] = {}
+
+    manager_nlp_raw = question1_manager_nlp(reports, timeframe=timeframe)
+
+    def _aggregate_manager_nlp(raw: pd.DataFrame) -> pd.DataFrame:
+        if raw.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_manager_nlp",
+                    "monto_manager_nlp",
+                    "roles_manager_nlp",
+                    "conceptos_manager_nlp",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in raw.to_dict(orient="records"):
+            tx_count = float(item.get("tx_count", 0) or 0)
+            monto_total = float(item.get("monto_total", 0) or 0)
+            concepts = item.get("nlp_concepto_sospechoso", [])
+            if not isinstance(concepts, list):
+                concepts = [concepts]
+            concept_list = [
+                str(concept).strip()
+                for concept in concepts
+                if str(concept).strip() and str(concept).strip().lower() != "nan"
+            ]
+            manager = _normalize_persona_id(item.get("manager_user_id"))
+            subordinate = _normalize_persona_id(item.get("subordinado_user_id"))
+            for persona, role in ((manager, "manager"), (subordinate, "subordinado")):
+                if not persona:
+                    continue
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_manager_nlp": tx_count,
+                        "monto_manager_nlp": monto_total,
+                        "roles_manager_nlp": [role],
+                        "conceptos_manager_nlp": concept_list,
+                    }
+                )
+
+        if not records:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_manager_nlp",
+                    "monto_manager_nlp",
+                    "roles_manager_nlp",
+                    "conceptos_manager_nlp",
+                ]
+            )
+
+        df = pd.DataFrame(records)
+        aggregated = (
+            df.groupby("persona", as_index=False)
+            .agg(
+                tx_manager_nlp=("tx_manager_nlp", "sum"),
+                monto_manager_nlp=("monto_manager_nlp", "sum"),
+                roles_manager_nlp=("roles_manager_nlp", _unique_list),
+                conceptos_manager_nlp=("conceptos_manager_nlp", _unique_list),
+            )
+        )
+        aggregated["tx_manager_nlp"] = (
+            pd.to_numeric(aggregated["tx_manager_nlp"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        aggregated["monto_manager_nlp"] = (
+            pd.to_numeric(aggregated["monto_manager_nlp"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+        )
+        return aggregated
+
+    manager_nlp_personas = _aggregate_manager_nlp(manager_nlp_raw)
+    if manager_nlp_personas.empty:
+        manager_nlp_personas = pd.DataFrame(
+            columns=[
+                "persona",
+                "tx_manager_nlp",
+                "monto_manager_nlp",
+                "roles_manager_nlp",
+                "conceptos_manager_nlp",
+                "score_manager_nlp",
+                "tier_manager_nlp",
+                "detalle_manager_nlp",
+            ]
+        )
+    else:
+        scores, _ = _score_metric_series(manager_nlp_personas["tx_manager_nlp"])
+        manager_nlp_personas["score_manager_nlp"] = scores
+        manager_nlp_personas["tier_manager_nlp"] = manager_nlp_personas[
+            "score_manager_nlp"
+        ].map(score_labels)
+        manager_nlp_personas["detalle_manager_nlp"] = manager_nlp_personas.apply(
+            lambda row: (
+                f"{int(row.get('tx_manager_nlp', 0))} tx por "
+                f"{_format_float(row.get('monto_manager_nlp', 0))} "
+                f"(roles: {_format_list(row.get('roles_manager_nlp', []))}; "
+                f"conceptos: {_format_list(row.get('conceptos_manager_nlp', []))})"
+            ),
+            axis=1,
+        )
+
+    scenario_frames["manager_nlp"] = manager_nlp_personas
+
+    def _build_manager_concepts(
+        manager_df: pd.DataFrame, concepts_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        if manager_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "riesgo_manager_concepts",
+                    "conceptos_manager_concepts",
+                    "score_manager_concepts",
+                    "tier_manager_concepts",
+                    "detalle_manager_concepts",
+                ]
+            )
+
+        concept_risk: dict[str, float] = {}
+        if not concepts_df.empty:
+            for item in concepts_df.to_dict(orient="records"):
+                concept = str(item.get("nlp_concepto_sospechoso", "")).strip()
+                if not concept or concept.lower() == "nan":
+                    continue
+                risk = float(item.get("risk_p95", 0) or 0)
+                concept_risk[concept] = max(concept_risk.get(concept, 0.0), risk)
+
+        work_concepts = manager_df[["persona", "conceptos_manager_nlp"]].copy()
+        work_concepts["conceptos_manager_concepts"] = work_concepts[
+            "conceptos_manager_nlp"
+        ].apply(_unique_list)
+
+        def _max_concept_risk(values: list[str]) -> float:
+            if not values:
+                return 0.0
+            risks = [concept_risk.get(value, 0.0) for value in values]
+            return float(max(risks) if risks else 0.0)
+
+        work_concepts["riesgo_manager_concepts"] = work_concepts[
+            "conceptos_manager_concepts"
+        ].apply(_max_concept_risk)
+
+        scores, _ = _score_metric_series(
+            work_concepts["riesgo_manager_concepts"], medium_quantile=0.6
+        )
+        work_concepts["score_manager_concepts"] = scores
+        work_concepts["tier_manager_concepts"] = work_concepts[
+            "score_manager_concepts"
+        ].map(score_labels)
+        work_concepts["detalle_manager_concepts"] = work_concepts.apply(
+            lambda row: (
+                f"Conceptos severos {_format_list(row.get('conceptos_manager_concepts', []))} "
+                f"con riesgo P95 {row.get('riesgo_manager_concepts', 0.0):.2f}"
+            ),
+            axis=1,
+        )
+        return work_concepts[[
+            "persona",
+            "riesgo_manager_concepts",
+            "conceptos_manager_concepts",
+            "score_manager_concepts",
+            "tier_manager_concepts",
+            "detalle_manager_concepts",
+        ]]
+
+    manager_concepts_raw = question2_manager_concepts(reports, timeframe=timeframe)
+    scenario_frames["manager_concepts"] = _build_manager_concepts(
+        manager_nlp_personas, manager_concepts_raw
+    )
+
+    def _split_pair(value: Any) -> list[str]:
+        text = str(value).strip() if value is not None else ""
+        if not text or text.lower() == "nan":
+            return []
+        for separator in ("⇄", "↔", "↔️"):
+            if separator in text:
+                return [part.strip() for part in text.split(separator) if part.strip()]
+        for separator in ("→", "->", "⟶", "➡", "➝"):
+            if separator in text:
+                return [part.strip() for part in text.split(separator) if part.strip()]
+        return []
+
+    def _aggregate_persona_records(
+        records: list[dict[str, Any]],
+        *,
+        numeric_fields: list[str],
+        list_fields: list[str] | None = None,
+    ) -> pd.DataFrame:
+        if list_fields is None:
+            list_fields = []
+        if not records:
+            columns = ["persona"] + numeric_fields + list_fields
+            return pd.DataFrame(columns=columns)
+
+        df = pd.DataFrame(records)
+        agg_dict: dict[str, tuple[str, Any]] = {}
+        for field in numeric_fields:
+            agg_dict[field] = (field, "sum")
+        for field in list_fields:
+            agg_dict[field] = (field, _unique_list)
+        aggregated = df.groupby("persona", as_index=False).agg(**agg_dict)
+        for field in numeric_fields:
+            aggregated[field] = (
+                pd.to_numeric(aggregated[field], errors="coerce").fillna(0.0)
+            )
+        return aggregated
+
+    quid_pairs_raw = question3_quid_pairs(
+        reports, timeframe=timeframe, min_score=1.0, min_manager_ratio=0.0
+    )
+
+    def _build_quid_pairs(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "metric_quid_pairs",
+                    "tx_quid_pairs",
+                    "counterpartes_quid_pairs",
+                    "score_quid_pairs",
+                    "tier_quid_pairs",
+                    "detalle_quid_pairs",
+                ]
+            )
+
+        if "nivel_respuesta" in df.columns:
+            work_df = df.loc[df["nivel_respuesta"] == "par"].copy()
+            if work_df.empty:
+                work_df = df.copy()
+        else:
+            work_df = df.copy()
+
+        records: list[dict[str, Any]] = []
+        for item in work_df.to_dict(orient="records"):
+            pair_key = _normalize_persona_id(item.get("quid_pair_clave"))
+            if not pair_key:
+                pair_key = _normalize_persona_id(item.get("pair"))
+            personas = _split_pair(pair_key)
+            if len(personas) != 2:
+                sender = _normalize_persona_id(item.get("user_id"))
+                receiver = _normalize_persona_id(item.get("receptor-user_id"))
+                personas = [p for p in (sender, receiver) if p]
+            if not personas:
+                continue
+            tx_count = float(item.get("quid_tx_count", 0) or 0)
+            score_max = float(item.get("quid_score_max", 0) or 0)
+            score_avg = float(item.get("quid_score_avg", 0) or 0)
+            weight_metric = tx_count * max(score_max, score_avg, 0.0)
+            for persona in personas:
+                other = [p for p in personas if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "metric_quid_pairs": weight_metric,
+                        "tx_quid_pairs": tx_count,
+                        "counterpartes_quid_pairs": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=["metric_quid_pairs", "tx_quid_pairs"],
+            list_fields=["counterpartes_quid_pairs"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_quid_pairs=pd.Series(dtype=int),
+                tier_quid_pairs=pd.Series(dtype="object"),
+                detalle_quid_pairs=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_quid_pairs"], medium_quantile=0.6
+        )
+        aggregated["score_quid_pairs"] = scores
+        aggregated["tier_quid_pairs"] = aggregated["score_quid_pairs"].map(
+            score_labels
+        )
+        aggregated["detalle_quid_pairs"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_quid_pairs', 0):.0f} tx sospechosas con contrapartes "
+                f"{_format_list(row.get('counterpartes_quid_pairs', []))} "
+                f"(peso {_format_float(row.get('metric_quid_pairs', 0))})"
+            ),
+            axis=1,
+        )
+        return aggregated[
+            [
+                "persona",
+                "metric_quid_pairs",
+                "tx_quid_pairs",
+                "counterpartes_quid_pairs",
+                "score_quid_pairs",
+                "tier_quid_pairs",
+                "detalle_quid_pairs",
+            ]
+        ]
+
+    scenario_frames["quid_pairs"] = _build_quid_pairs(quid_pairs_raw)
+
+    quid_negative_raw = question4_quid_negative_value_vs_load(
+        reports, timeframe=timeframe
+    )
+
+    def _build_quid_negative(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "metric_quid_value_vs_load",
+                    "tx_quid_value_vs_load",
+                    "delta_quid_value_vs_load",
+                    "score_signal_quid_value_vs_load",
+                    "counterpartes_quid_value_vs_load",
+                    "responsables_quid_value_vs_load",
+                    "score_quid_value_vs_load",
+                    "tier_quid_value_vs_load",
+                    "detalle_quid_value_vs_load",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            sender = _normalize_persona_id(item.get(COL_SENDER_ID))
+            receiver = _normalize_persona_id(item.get(COL_RECEIVER_ID))
+            personas = [p for p in (sender, receiver) if p]
+            if not personas:
+                continue
+            responsable = _normalize_persona_id(item.get("responsable_user_id"))
+            delta_days = float(item.get("feat_quid_value_vs_load_days", 0) or 0)
+            delta_metric = abs(delta_days) if delta_days < 0 else 0.0
+            score_val = float(item.get("feat_quid_score", 0) or 0)
+            combined_metric = delta_metric + max(score_val, 0.0)
+            for persona in personas:
+                other = [p for p in personas if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "metric_quid_value_vs_load": combined_metric,
+                        "tx_quid_value_vs_load": 1.0,
+                        "delta_quid_value_vs_load": delta_metric,
+                        "score_signal_quid_value_vs_load": max(score_val, 0.0),
+                        "counterpartes_quid_value_vs_load": other,
+                        "responsables_quid_value_vs_load": [responsable]
+                        if responsable
+                        else [],
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=[
+                "metric_quid_value_vs_load",
+                "tx_quid_value_vs_load",
+                "delta_quid_value_vs_load",
+                "score_signal_quid_value_vs_load",
+            ],
+            list_fields=[
+                "counterpartes_quid_value_vs_load",
+                "responsables_quid_value_vs_load",
+            ],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_quid_value_vs_load=pd.Series(dtype=int),
+                tier_quid_value_vs_load=pd.Series(dtype="object"),
+                detalle_quid_value_vs_load=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_quid_value_vs_load"], medium_quantile=0.5
+        )
+        aggregated["score_quid_value_vs_load"] = scores
+        aggregated["tier_quid_value_vs_load"] = aggregated[
+            "score_quid_value_vs_load"
+        ].map(score_labels)
+        aggregated["detalle_quid_value_vs_load"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_quid_value_vs_load', 0):.0f} tx con desfase acumulado "
+                f"{_format_float(row.get('delta_quid_value_vs_load', 0))} días y puntaje "
+                f"{row.get('score_signal_quid_value_vs_load', 0):.2f}; contrapartes "
+                f"{_format_list(row.get('counterpartes_quid_value_vs_load', []))}; "
+                f"responsables {_format_list(row.get('responsables_quid_value_vs_load', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated[
+            [
+                "persona",
+                "metric_quid_value_vs_load",
+                "tx_quid_value_vs_load",
+                "delta_quid_value_vs_load",
+                "score_signal_quid_value_vs_load",
+                "counterpartes_quid_value_vs_load",
+                "responsables_quid_value_vs_load",
+                "score_quid_value_vs_load",
+                "tier_quid_value_vs_load",
+                "detalle_quid_value_vs_load",
+            ]
+        ]
+
+    scenario_frames["quid_value_vs_load"] = _build_quid_negative(quid_negative_raw)
+
+    reference_reuse_raw = question5_reference_reuse(reports, timeframe=timeframe)
+
+    def _build_reference_reuse(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "metric_reference_reuse",
+                    "tx_reference_reuse",
+                    "referencias_reference_reuse",
+                    "counterpartes_reference_reuse",
+                    "score_reference_reuse",
+                    "tier_reference_reuse",
+                    "detalle_reference_reuse",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            tx_count = float(item.get("tx_count", 0) or 0)
+            reference = str(item.get("reference_norm", "")).strip()
+            pairs_text = item.get("pairs")
+            if isinstance(pairs_text, str):
+                pair_values = [p.strip() for p in pairs_text.split(";") if p.strip()]
+            else:
+                pair_values = []
+            for pair in pair_values:
+                personas = _split_pair(pair)
+                if len(personas) != 2:
+                    continue
+                for persona in personas:
+                    other = [p for p in personas if p != persona]
+                    records.append(
+                        {
+                            "persona": persona,
+                            "metric_reference_reuse": tx_count,
+                            "tx_reference_reuse": tx_count,
+                            "referencias_reference_reuse": [reference]
+                            if reference
+                            else [],
+                            "counterpartes_reference_reuse": other,
+                        }
+                    )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=["metric_reference_reuse", "tx_reference_reuse"],
+            list_fields=[
+                "referencias_reference_reuse",
+                "counterpartes_reference_reuse",
+            ],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_reference_reuse=pd.Series(dtype=int),
+                tier_reference_reuse=pd.Series(dtype="object"),
+                detalle_reference_reuse=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_reference_reuse"], medium_quantile=0.55
+        )
+        aggregated["score_reference_reuse"] = scores
+        aggregated["tier_reference_reuse"] = aggregated["score_reference_reuse"].map(
+            score_labels
+        )
+        aggregated["detalle_reference_reuse"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_reference_reuse', 0):.0f} tx con referencias "
+                f"reutilizadas {_format_list(row.get('referencias_reference_reuse', []))} "
+                f"y contrapartes {_format_list(row.get('counterpartes_reference_reuse', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated[
+            [
+                "persona",
+                "metric_reference_reuse",
+                "tx_reference_reuse",
+                "referencias_reference_reuse",
+                "counterpartes_reference_reuse",
+                "score_reference_reuse",
+                "tier_reference_reuse",
+                "detalle_reference_reuse",
+            ]
+        ]
+
+    scenario_frames["reference_reuse"] = _build_reference_reuse(
+        reference_reuse_raw
+    )
+
+    centralizers_raw = question6_centralizers(reports, timeframe=timeframe)
+
+    def _build_centralizers(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_centralizer_inflow",
+                    "emisores_centralizer",
+                    "tx_centralizer",
+                    "score_centralizer",
+                    "tier_centralizer",
+                    "detalle_centralizer",
+                ]
+            )
+
+        work_df = df.copy()
+        persona_col = "receptor-user_id"
+        if persona_col not in work_df.columns:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_centralizer_inflow",
+                    "emisores_centralizer",
+                    "tx_centralizer",
+                    "score_centralizer",
+                    "tier_centralizer",
+                    "detalle_centralizer",
+                ]
+            )
+        work_df["persona"] = work_df[persona_col].apply(_normalize_persona_id)
+        work_df = work_df.loc[work_df["persona"] != ""].copy()
+        if work_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_centralizer_inflow",
+                    "emisores_centralizer",
+                    "tx_centralizer",
+                    "score_centralizer",
+                    "tier_centralizer",
+                    "detalle_centralizer",
+                ]
+            )
+
+        work_df["monto_centralizer_inflow"] = pd.to_numeric(
+            work_df.get("inflow", 0), errors="coerce"
+        ).fillna(0.0)
+        work_df["emisores_centralizer"] = pd.to_numeric(
+            work_df.get("emisores_unicos", 0), errors="coerce"
+        ).fillna(0).astype(int)
+        work_df["tx_centralizer"] = pd.to_numeric(
+            work_df.get("n_tx", 0), errors="coerce"
+        ).fillna(0).astype(int)
+
+        summarized = work_df[[
+            "persona",
+            "monto_centralizer_inflow",
+            "emisores_centralizer",
+            "tx_centralizer",
+        ]].groupby("persona", as_index=False).agg(
+            monto_centralizer_inflow=("monto_centralizer_inflow", "sum"),
+            emisores_centralizer=("emisores_centralizer", "max"),
+            tx_centralizer=("tx_centralizer", "sum"),
+        )
+        scores, _ = _score_metric_series(
+            summarized["monto_centralizer_inflow"], medium_quantile=0.55
+        )
+        summarized["score_centralizer"] = scores
+        summarized["tier_centralizer"] = summarized["score_centralizer"].map(
+            score_labels
+        )
+        summarized["detalle_centralizer"] = summarized.apply(
+            lambda row: (
+                f"Recibió {_format_float(row.get('monto_centralizer_inflow', 0))} "
+                f"de {int(row.get('emisores_centralizer', 0))} emisores únicos "
+                f"en {int(row.get('tx_centralizer', 0))} pagos"
+            ),
+            axis=1,
+        )
+        return summarized
+
+    scenario_frames["centralizer"] = _build_centralizers(centralizers_raw)
+
+    def _build_net_imbalance(base_df: pd.DataFrame) -> pd.DataFrame:
+        if base_df.empty or "persona" not in base_df.columns:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_net_imbalance_abs",
+                    "meses_envia_net_imbalance",
+                    "meses_recibe_net_imbalance",
+                    "score_net_imbalance",
+                    "tier_net_imbalance",
+                    "detalle_net_imbalance",
+                ]
+            )
+
+        net_df = base_df[[
+            "persona",
+            "desbalance_persona_monto_neto",
+            "desbalance_persona_meses_totales",
+        ]].copy()
+        net_df["desbalance_persona_meses_envia_extremo"] = base_df.get(
+            "desbalance_persona_meses_envia_extremo", 0
+        )
+        net_df["desbalance_persona_meses_recibe_extremo"] = base_df.get(
+            "desbalance_persona_meses_recibe_extremo", 0
+        )
+        net_df["persona"] = net_df["persona"].apply(_normalize_persona_id)
+        net_df = net_df.loc[net_df["persona"] != ""].copy()
+        if net_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_net_imbalance_abs",
+                    "meses_envia_net_imbalance",
+                    "meses_recibe_net_imbalance",
+                    "score_net_imbalance",
+                    "tier_net_imbalance",
+                    "detalle_net_imbalance",
+                ]
+            )
+
+        net_df["monto_net_imbalance_abs"] = pd.to_numeric(
+            net_df.get("desbalance_persona_monto_neto", 0), errors="coerce"
+        ).fillna(0.0).abs()
+        net_df["meses_envia_net_imbalance"] = pd.to_numeric(
+            net_df.get("desbalance_persona_meses_envia_extremo", 0), errors="coerce"
+        ).fillna(0.0)
+        net_df["meses_recibe_net_imbalance"] = pd.to_numeric(
+            net_df.get("desbalance_persona_meses_recibe_extremo", 0), errors="coerce"
+        ).fillna(0.0)
+
+        aggregated = net_df[[
+            "persona",
+            "monto_net_imbalance_abs",
+            "meses_envia_net_imbalance",
+            "meses_recibe_net_imbalance",
+        ]].groupby("persona", as_index=False).agg(
+            monto_net_imbalance_abs=("monto_net_imbalance_abs", "max"),
+            meses_envia_net_imbalance=("meses_envia_net_imbalance", "max"),
+            meses_recibe_net_imbalance=("meses_recibe_net_imbalance", "max"),
+        )
+        scores, _ = _score_metric_series(
+            aggregated["monto_net_imbalance_abs"], medium_quantile=0.6
+        )
+        aggregated["score_net_imbalance"] = scores
+        aggregated["tier_net_imbalance"] = aggregated["score_net_imbalance"].map(
+            score_labels
+        )
+        aggregated["detalle_net_imbalance"] = aggregated.apply(
+            lambda row: (
+                f"Desbalance neto {_format_float(row.get('monto_net_imbalance_abs', 0))} "
+                f"con meses extremos envío {row.get('meses_envia_net_imbalance', 0):.0f} "
+                f"y recepción {row.get('meses_recibe_net_imbalance', 0):.0f}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["net_imbalance"] = _build_net_imbalance(work)
+
+    case13_raw = question8_case13_new_employees(reports, timeframe=timeframe)
+
+    def _build_case13(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_case13",
+                    "tx_case13",
+                    "emisores_case13",
+                    "score_case13",
+                    "tier_case13",
+                    "detalle_case13",
+                ]
+            )
+
+        work_df = df.copy()
+        work_df["persona"] = work_df["persona"].apply(_normalize_persona_id)
+        work_df = work_df.loc[work_df["persona"] != ""].copy()
+        if work_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_case13",
+                    "tx_case13",
+                    "emisores_case13",
+                    "score_case13",
+                    "tier_case13",
+                    "detalle_case13",
+                ]
+            )
+
+        work_df["monto_case13"] = pd.to_numeric(
+            work_df.get("caso13_persona_monto_total", 0), errors="coerce"
+        ).fillna(0.0)
+        work_df["tx_case13"] = pd.to_numeric(
+            work_df.get("caso13_persona_tx_recibidas", 0), errors="coerce"
+        ).fillna(0).astype(int)
+        work_df["emisores_case13"] = pd.to_numeric(
+            work_df.get("caso13_persona_emisores_unicos", 0), errors="coerce"
+        ).fillna(0).astype(int)
+
+        aggregated = work_df[[
+            "persona",
+            "monto_case13",
+            "tx_case13",
+            "emisores_case13",
+        ]]
+        scores, _ = _score_metric_series(aggregated["monto_case13"], medium_quantile=0.6)
+        aggregated["score_case13"] = scores
+        aggregated["tier_case13"] = aggregated["score_case13"].map(score_labels)
+        aggregated["detalle_case13"] = aggregated.apply(
+            lambda row: (
+                f"Recibió {_format_float(row.get('monto_case13', 0))} en {int(row.get('tx_case13', 0))} tx "
+                f"desde {int(row.get('emisores_case13', 0))} emisores"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["case13"] = _build_case13(case13_raw)
+
+    case14_raw = question9_case14_veterans_from_newcomers(
+        reports, timeframe=timeframe
+    )
+
+    def _build_case14(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_case14",
+                    "tx_case14",
+                    "emisores_case14",
+                    "score_case14",
+                    "tier_case14",
+                    "detalle_case14",
+                ]
+            )
+
+        work_df = df.copy()
+        work_df["persona"] = work_df["persona"].apply(_normalize_persona_id)
+        work_df = work_df.loc[work_df["persona"] != ""].copy()
+        if work_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "monto_case14",
+                    "tx_case14",
+                    "emisores_case14",
+                    "score_case14",
+                    "tier_case14",
+                    "detalle_case14",
+                ]
+            )
+
+        work_df["monto_case14"] = pd.to_numeric(
+            work_df.get("caso14_persona_monto_de_emisores_nuevos", 0), errors="coerce"
+        ).fillna(0.0)
+        work_df["tx_case14"] = pd.to_numeric(
+            work_df.get("caso14_persona_tx_de_emisores_nuevos", 0), errors="coerce"
+        ).fillna(0).astype(int)
+        work_df["emisores_case14"] = pd.to_numeric(
+            work_df.get("caso14_persona_emisores_nuevos_unicos", 0), errors="coerce"
+        ).fillna(0).astype(int)
+
+        aggregated = work_df[[
+            "persona",
+            "monto_case14",
+            "tx_case14",
+            "emisores_case14",
+        ]]
+        scores, _ = _score_metric_series(aggregated["monto_case14"], medium_quantile=0.6)
+        aggregated["score_case14"] = scores
+        aggregated["tier_case14"] = aggregated["score_case14"].map(score_labels)
+        aggregated["detalle_case14"] = aggregated.apply(
+            lambda row: (
+                f"Recibió {_format_float(row.get('monto_case14', 0))} en {int(row.get('tx_case14', 0))} tx "
+                f"de {int(row.get('emisores_case14', 0))} emisores nuevos"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["case14"] = _build_case14(case14_raw)
+
+    yoyo_raw = question10_yoyo_streaks(reports, timeframe=timeframe)
+
+    def _build_yoyo(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_yoyo",
+                    "racha_yoyo_max",
+                    "metric_yoyo",
+                    "score_yoyo",
+                    "tier_yoyo",
+                    "detalle_yoyo",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            pair = _split_pair(item.get("par_bidir"))
+            if len(pair) != 2:
+                continue
+            tx_total = float(item.get("tx_yo_yo_totales", 0) or 0)
+            racha_max = float(item.get("racha_max_yo_yo", 0) or 0)
+            riesgo_max = float(item.get("riesgo_max_yo_yo", 0) or 0)
+            metric = tx_total + max(racha_max, 0) + max(riesgo_max - 1.0, 0)
+            for persona in pair:
+                other = [p for p in pair if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_yoyo": tx_total,
+                        "racha_yoyo_max": racha_max,
+                        "metric_yoyo": metric,
+                        "counterpartes_yoyo": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=["metric_yoyo", "tx_yoyo", "racha_yoyo_max"],
+            list_fields=["counterpartes_yoyo"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_yoyo=pd.Series(dtype=int),
+                tier_yoyo=pd.Series(dtype="object"),
+                detalle_yoyo=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_yoyo"], medium_quantile=0.55
+        )
+        aggregated["score_yoyo"] = scores
+        aggregated["tier_yoyo"] = aggregated["score_yoyo"].map(score_labels)
+        aggregated["detalle_yoyo"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_yoyo', 0):.0f} tx yo-yo, racha máxima {row.get('racha_yoyo_max', 0):.0f} "
+                f"con {_format_list(row.get('counterpartes_yoyo', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["yoyo"] = _build_yoyo(yoyo_raw)
+
+    near_threshold_raw = question11_near_threshold_structuring(
+        reports, timeframe=timeframe
+    )
+
+    def _build_near_threshold(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_near_threshold",
+                    "monto_near_threshold",
+                    "metric_near_threshold",
+                    "score_near_threshold",
+                    "tier_near_threshold",
+                    "detalle_near_threshold",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            pair = _split_pair(item.get("pair"))
+            if len(pair) != 2:
+                continue
+            tx_total = float(item.get("tx_near_totales", 0) or 0)
+            monto_total = float(item.get("monto_total_near", 0) or 0)
+            metric = tx_total + monto_total / 1000.0
+            for persona in pair:
+                other = [p for p in pair if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_near_threshold": tx_total,
+                        "monto_near_threshold": monto_total,
+                        "metric_near_threshold": metric,
+                        "counterpartes_near_threshold": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=[
+                "metric_near_threshold",
+                "tx_near_threshold",
+                "monto_near_threshold",
+            ],
+            list_fields=["counterpartes_near_threshold"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_near_threshold=pd.Series(dtype=int),
+                tier_near_threshold=pd.Series(dtype="object"),
+                detalle_near_threshold=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_near_threshold"], medium_quantile=0.55
+        )
+        aggregated["score_near_threshold"] = scores
+        aggregated["tier_near_threshold"] = aggregated[
+            "score_near_threshold"
+        ].map(score_labels)
+        aggregated["detalle_near_threshold"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_near_threshold', 0):.0f} tx cerca de umbral por "
+                f"{_format_float(row.get('monto_near_threshold', 0))} con "
+                f"{_format_list(row.get('counterpartes_near_threshold', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["near_threshold"] = _build_near_threshold(near_threshold_raw)
+
+    smurfing_raw = question12_smurfing_chronic(reports, timeframe=timeframe)
+
+    def _build_smurfing(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_smurfing",
+                    "monto_smurfing",
+                    "metric_smurfing",
+                    "score_smurfing",
+                    "tier_smurfing",
+                    "detalle_smurfing",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            pair = _split_pair(item.get("pair"))
+            if len(pair) != 2:
+                continue
+            tx_total = float(item.get("transacciones_fraccionadas", 0) or 0)
+            monto_total = float(item.get("monto_fraccionado_total", 0) or 0)
+            metric = tx_total + monto_total / 1000.0
+            for persona in pair:
+                other = [p for p in pair if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_smurfing": tx_total,
+                        "monto_smurfing": monto_total,
+                        "metric_smurfing": metric,
+                        "counterpartes_smurfing": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=["metric_smurfing", "tx_smurfing", "monto_smurfing"],
+            list_fields=["counterpartes_smurfing"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_smurfing=pd.Series(dtype=int),
+                tier_smurfing=pd.Series(dtype="object"),
+                detalle_smurfing=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_smurfing"], medium_quantile=0.55
+        )
+        aggregated["score_smurfing"] = scores
+        aggregated["tier_smurfing"] = aggregated["score_smurfing"].map(score_labels)
+        aggregated["detalle_smurfing"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_smurfing', 0):.0f} tx fraccionadas por "
+                f"{_format_float(row.get('monto_smurfing', 0))} con "
+                f"{_format_list(row.get('counterpartes_smurfing', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["smurfing"] = _build_smurfing(smurfing_raw)
+
+    bad_loans_raw = question13_bad_loans_with_frequency(
+        reports, timeframe=timeframe
+    )
+
+    def _build_bad_loans(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_bad_loans",
+                    "monto_bad_loans",
+                    "eventos_bad_loans",
+                    "metric_bad_loans",
+                    "score_bad_loans",
+                    "tier_bad_loans",
+                    "detalle_bad_loans",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            pair = _split_pair(item.get("pair"))
+            if len(pair) != 2:
+                continue
+            tx_total = float(item.get("prestamos_incumplidos", 0) or 0)
+            monto_total = float(item.get("monto_prestamos_incumplidos", 0) or 0)
+            eventos = float(item.get("eventos_alta_frecuencia", 0) or 0)
+            metric = monto_total + tx_total * 1000.0 + eventos * 500.0
+            for persona in pair:
+                other = [p for p in pair if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_bad_loans": tx_total,
+                        "monto_bad_loans": monto_total,
+                        "eventos_bad_loans": eventos,
+                        "metric_bad_loans": metric,
+                        "counterpartes_bad_loans": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=[
+                "metric_bad_loans",
+                "tx_bad_loans",
+                "monto_bad_loans",
+                "eventos_bad_loans",
+            ],
+            list_fields=["counterpartes_bad_loans"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_bad_loans=pd.Series(dtype=int),
+                tier_bad_loans=pd.Series(dtype="object"),
+                detalle_bad_loans=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_bad_loans"], medium_quantile=0.55
+        )
+        aggregated["score_bad_loans"] = scores
+        aggregated["tier_bad_loans"] = aggregated["score_bad_loans"].map(
+            score_labels
+        )
+        aggregated["detalle_bad_loans"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_bad_loans', 0):.0f} préstamos impagos por "
+                f"{_format_float(row.get('monto_bad_loans', 0))} con eventos "
+                f"de alta frecuencia {row.get('eventos_bad_loans', 0):.0f} junto a "
+                f"{_format_list(row.get('counterpartes_bad_loans', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["bad_loans"] = _build_bad_loans(bad_loans_raw)
+
+    payroll_raw = question14_recurrent_payroll(reports, timeframe=timeframe)
+
+    def _build_payroll(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "persona",
+                    "tx_recurrent_payroll",
+                    "meses_recurrent_payroll",
+                    "monto_recurrent_payroll",
+                    "metric_recurrent_payroll",
+                    "score_recurrent_payroll",
+                    "tier_recurrent_payroll",
+                    "detalle_recurrent_payroll",
+                ]
+            )
+
+        records: list[dict[str, Any]] = []
+        for item in df.to_dict(orient="records"):
+            sender = _normalize_persona_id(item.get("emisor"))
+            receiver = _normalize_persona_id(item.get("receptor"))
+            personas = [p for p in (sender, receiver) if p]
+            if not personas:
+                continue
+            meses = float(item.get("meses_recurrentes", 0) or 0)
+            tx_total = float(item.get("tx_totales", 0) or 0)
+            monto_total = float(item.get("monto_total", 0) or 0)
+            metric = monto_total + meses * 1000.0
+            for persona in personas:
+                other = [p for p in personas if p != persona]
+                records.append(
+                    {
+                        "persona": persona,
+                        "tx_recurrent_payroll": tx_total,
+                        "meses_recurrent_payroll": meses,
+                        "monto_recurrent_payroll": monto_total,
+                        "metric_recurrent_payroll": metric,
+                        "counterpartes_recurrent_payroll": other,
+                    }
+                )
+
+        aggregated = _aggregate_persona_records(
+            records,
+            numeric_fields=[
+                "metric_recurrent_payroll",
+                "tx_recurrent_payroll",
+                "meses_recurrent_payroll",
+                "monto_recurrent_payroll",
+            ],
+            list_fields=["counterpartes_recurrent_payroll"],
+        )
+        if aggregated.empty:
+            return aggregated.assign(
+                score_recurrent_payroll=pd.Series(dtype=int),
+                tier_recurrent_payroll=pd.Series(dtype="object"),
+                detalle_recurrent_payroll=pd.Series(dtype="object"),
+            )
+
+        scores, _ = _score_metric_series(
+            aggregated["metric_recurrent_payroll"], medium_quantile=0.55
+        )
+        aggregated["score_recurrent_payroll"] = scores
+        aggregated["tier_recurrent_payroll"] = aggregated[
+            "score_recurrent_payroll"
+        ].map(score_labels)
+        aggregated["detalle_recurrent_payroll"] = aggregated.apply(
+            lambda row: (
+                f"{row.get('tx_recurrent_payroll', 0):.0f} pagos en "
+                f"{row.get('meses_recurrent_payroll', 0):.0f} meses por "
+                f"{_format_float(row.get('monto_recurrent_payroll', 0))} con "
+                f"{_format_list(row.get('counterpartes_recurrent_payroll', []))}"
+            ),
+            axis=1,
+        )
+        return aggregated
+
+    scenario_frames["recurrent_payroll"] = _build_payroll(payroll_raw)
+
+    scenario_metadata = {
+        "manager_nlp": {
+            "label": "NLP manager-subordinado",
+            "weight": 1.1,
+            "score_col": "score_manager_nlp",
+            "tier_col": "tier_manager_nlp",
+            "detail_col": "detalle_manager_nlp",
+            "columns": [
+                "tx_manager_nlp",
+                "monto_manager_nlp",
+                "roles_manager_nlp",
+                "conceptos_manager_nlp",
+                "score_manager_nlp",
+                "tier_manager_nlp",
+                "detalle_manager_nlp",
+            ],
+            "numeric_cols": ["tx_manager_nlp", "monto_manager_nlp"],
+            "list_cols": ["roles_manager_nlp", "conceptos_manager_nlp"],
+        },
+        "manager_concepts": {
+            "label": "Conceptos NLP severos",
+            "weight": 0.9,
+            "score_col": "score_manager_concepts",
+            "tier_col": "tier_manager_concepts",
+            "detail_col": "detalle_manager_concepts",
+            "columns": [
+                "riesgo_manager_concepts",
+                "conceptos_manager_concepts",
+                "score_manager_concepts",
+                "tier_manager_concepts",
+                "detalle_manager_concepts",
+            ],
+            "numeric_cols": ["riesgo_manager_concepts"],
+            "list_cols": ["conceptos_manager_concepts"],
+        },
+        "quid_pairs": {
+            "label": "Quid pro quo",
+            "weight": 1.2,
+            "score_col": "score_quid_pairs",
+            "tier_col": "tier_quid_pairs",
+            "detail_col": "detalle_quid_pairs",
+            "columns": [
+                "metric_quid_pairs",
+                "tx_quid_pairs",
+                "counterpartes_quid_pairs",
+                "score_quid_pairs",
+                "tier_quid_pairs",
+                "detalle_quid_pairs",
+            ],
+            "numeric_cols": ["metric_quid_pairs", "tx_quid_pairs"],
+            "list_cols": ["counterpartes_quid_pairs"],
+        },
+        "quid_value_vs_load": {
+            "label": "Valor vs carga",
+            "weight": 1.0,
+            "score_col": "score_quid_value_vs_load",
+            "tier_col": "tier_quid_value_vs_load",
+            "detail_col": "detalle_quid_value_vs_load",
+            "columns": [
+                "metric_quid_value_vs_load",
+                "tx_quid_value_vs_load",
+                "delta_quid_value_vs_load",
+                "score_signal_quid_value_vs_load",
+                "counterpartes_quid_value_vs_load",
+                "responsables_quid_value_vs_load",
+                "score_quid_value_vs_load",
+                "tier_quid_value_vs_load",
+                "detalle_quid_value_vs_load",
+            ],
+            "numeric_cols": [
+                "metric_quid_value_vs_load",
+                "tx_quid_value_vs_load",
+                "delta_quid_value_vs_load",
+                "score_signal_quid_value_vs_load",
+            ],
+            "list_cols": [
+                "counterpartes_quid_value_vs_load",
+                "responsables_quid_value_vs_load",
+            ],
+        },
+        "reference_reuse": {
+            "label": "Referencias reutilizadas",
+            "weight": 1.0,
+            "score_col": "score_reference_reuse",
+            "tier_col": "tier_reference_reuse",
+            "detail_col": "detalle_reference_reuse",
+            "columns": [
+                "metric_reference_reuse",
+                "tx_reference_reuse",
+                "referencias_reference_reuse",
+                "counterpartes_reference_reuse",
+                "score_reference_reuse",
+                "tier_reference_reuse",
+                "detalle_reference_reuse",
+            ],
+            "numeric_cols": ["metric_reference_reuse", "tx_reference_reuse"],
+            "list_cols": [
+                "referencias_reference_reuse",
+                "counterpartes_reference_reuse",
+            ],
+        },
+        "centralizer": {
+            "label": "Centralizadores",
+            "weight": 1.1,
+            "score_col": "score_centralizer",
+            "tier_col": "tier_centralizer",
+            "detail_col": "detalle_centralizer",
+            "columns": [
+                "monto_centralizer_inflow",
+                "emisores_centralizer",
+                "tx_centralizer",
+                "score_centralizer",
+                "tier_centralizer",
+                "detalle_centralizer",
+            ],
+            "numeric_cols": [
+                "monto_centralizer_inflow",
+                "emisores_centralizer",
+                "tx_centralizer",
+            ],
+            "list_cols": [],
+        },
+        "net_imbalance": {
+            "label": "Desbalance neto",
+            "weight": 1.4,
+            "score_col": "score_net_imbalance",
+            "tier_col": "tier_net_imbalance",
+            "detail_col": "detalle_net_imbalance",
+            "columns": [
+                "monto_net_imbalance_abs",
+                "meses_envia_net_imbalance",
+                "meses_recibe_net_imbalance",
+                "score_net_imbalance",
+                "tier_net_imbalance",
+                "detalle_net_imbalance",
+            ],
+            "numeric_cols": [
+                "monto_net_imbalance_abs",
+                "meses_envia_net_imbalance",
+                "meses_recibe_net_imbalance",
+            ],
+            "list_cols": [],
+        },
+        "case13": {
+            "label": "Receptores nuevos (Caso 13)",
+            "weight": 1.3,
+            "score_col": "score_case13",
+            "tier_col": "tier_case13",
+            "detail_col": "detalle_case13",
+            "columns": [
+                "monto_case13",
+                "tx_case13",
+                "emisores_case13",
+                "score_case13",
+                "tier_case13",
+                "detalle_case13",
+            ],
+            "numeric_cols": ["monto_case13", "tx_case13", "emisores_case13"],
+            "list_cols": [],
+        },
+        "case14": {
+            "label": "Veteranos desde nuevos (Caso 14)",
+            "weight": 1.2,
+            "score_col": "score_case14",
+            "tier_col": "tier_case14",
+            "detail_col": "detalle_case14",
+            "columns": [
+                "monto_case14",
+                "tx_case14",
+                "emisores_case14",
+                "score_case14",
+                "tier_case14",
+                "detalle_case14",
+            ],
+            "numeric_cols": ["monto_case14", "tx_case14", "emisores_case14"],
+            "list_cols": [],
+        },
+        "yoyo": {
+            "label": "Rachas yo-yo",
+            "weight": 1.0,
+            "score_col": "score_yoyo",
+            "tier_col": "tier_yoyo",
+            "detail_col": "detalle_yoyo",
+            "columns": [
+                "metric_yoyo",
+                "tx_yoyo",
+                "racha_yoyo_max",
+                "counterpartes_yoyo",
+                "score_yoyo",
+                "tier_yoyo",
+                "detalle_yoyo",
+            ],
+            "numeric_cols": ["metric_yoyo", "tx_yoyo", "racha_yoyo_max"],
+            "list_cols": ["counterpartes_yoyo"],
+        },
+        "near_threshold": {
+            "label": "Cercanía a umbral",
+            "weight": 0.9,
+            "score_col": "score_near_threshold",
+            "tier_col": "tier_near_threshold",
+            "detail_col": "detalle_near_threshold",
+            "columns": [
+                "metric_near_threshold",
+                "tx_near_threshold",
+                "monto_near_threshold",
+                "counterpartes_near_threshold",
+                "score_near_threshold",
+                "tier_near_threshold",
+                "detalle_near_threshold",
+            ],
+            "numeric_cols": [
+                "metric_near_threshold",
+                "tx_near_threshold",
+                "monto_near_threshold",
+            ],
+            "list_cols": ["counterpartes_near_threshold"],
+        },
+        "smurfing": {
+            "label": "Fraccionamiento crónico",
+            "weight": 1.4,
+            "score_col": "score_smurfing",
+            "tier_col": "tier_smurfing",
+            "detail_col": "detalle_smurfing",
+            "columns": [
+                "metric_smurfing",
+                "tx_smurfing",
+                "monto_smurfing",
+                "counterpartes_smurfing",
+                "score_smurfing",
+                "tier_smurfing",
+                "detalle_smurfing",
+            ],
+            "numeric_cols": [
+                "metric_smurfing",
+                "tx_smurfing",
+                "monto_smurfing",
+            ],
+            "list_cols": ["counterpartes_smurfing"],
+        },
+        "bad_loans": {
+            "label": "Préstamos impagos",
+            "weight": 1.3,
+            "score_col": "score_bad_loans",
+            "tier_col": "tier_bad_loans",
+            "detail_col": "detalle_bad_loans",
+            "columns": [
+                "metric_bad_loans",
+                "tx_bad_loans",
+                "monto_bad_loans",
+                "eventos_bad_loans",
+                "counterpartes_bad_loans",
+                "score_bad_loans",
+                "tier_bad_loans",
+                "detalle_bad_loans",
+            ],
+            "numeric_cols": [
+                "metric_bad_loans",
+                "tx_bad_loans",
+                "monto_bad_loans",
+                "eventos_bad_loans",
+            ],
+            "list_cols": ["counterpartes_bad_loans"],
+        },
+        "recurrent_payroll": {
+            "label": "Pagos recurrentes",
+            "weight": 1.2,
+            "score_col": "score_recurrent_payroll",
+            "tier_col": "tier_recurrent_payroll",
+            "detail_col": "detalle_recurrent_payroll",
+            "columns": [
+                "metric_recurrent_payroll",
+                "tx_recurrent_payroll",
+                "meses_recurrent_payroll",
+                "monto_recurrent_payroll",
+                "counterpartes_recurrent_payroll",
+                "score_recurrent_payroll",
+                "tier_recurrent_payroll",
+                "detalle_recurrent_payroll",
+            ],
+            "numeric_cols": [
+                "metric_recurrent_payroll",
+                "tx_recurrent_payroll",
+                "meses_recurrent_payroll",
+                "monto_recurrent_payroll",
+            ],
+            "list_cols": ["counterpartes_recurrent_payroll"],
+        },
+    }
+
+    scenario_columns_order: list[str] = []
+    for key, meta in scenario_metadata.items():
+        scenario_df = scenario_frames.get(key, pd.DataFrame())
+        expected_cols = ["persona"] + meta["columns"]
+        if scenario_df.empty:
+            scenario_df = pd.DataFrame(columns=expected_cols)
+        else:
+            scenario_df = scenario_df.reindex(columns=expected_cols)
+        work = work.merge(scenario_df, on="persona", how="left")
+        for col in meta.get("numeric_cols", []):
+            if col in work.columns:
+                work[col] = pd.to_numeric(work[col], errors="coerce").fillna(0.0)
+        for col in meta.get("list_cols", []):
+            if col in work.columns:
+                work[col] = work[col].apply(_ensure_list)
+        score_col = meta["score_col"]
+        tier_col = meta["tier_col"]
+        work[score_col] = (
+            pd.to_numeric(work.get(score_col, 1), errors="coerce")
+            .fillna(1)
+            .astype(int)
+        )
+        work[tier_col] = work.get(tier_col, "Bajo").fillna("Bajo").astype(str)
+        detail_col = meta.get("detail_col")
+        if detail_col and detail_col in work.columns:
+            work[detail_col] = work[detail_col].fillna("sin_detalle").astype(str)
+        scenario_columns_order.extend(
+            [col for col in meta["columns"] if col not in scenario_columns_order]
+        )
+
+    total_weight = sum(item["weight"] for item in scenario_metadata.values())
+    work["casuistica_score_total"] = 0.0
+    for meta in scenario_metadata.values():
+        work["casuistica_score_total"] += work[meta["score_col"]] * meta["weight"]
+    work["casuistica_score_promedio"] = (
+        work["casuistica_score_total"] / total_weight if total_weight > 0 else 0.0
+    )
+
+    def _build_casuistica_resumen(row: pd.Series) -> str:
+        contributions: list[tuple[int, float, str]] = []
+        for meta in scenario_metadata.values():
+            score_value = int(row.get(meta["score_col"], 1))
+            if score_value <= 1:
+                continue
+            detail_col = meta.get("detail_col")
+            detail = str(row.get(detail_col, "sin_detalle")) if detail_col else ""
+            label = f"{meta['label']} {score_labels.get(score_value, 'Bajo')}"
+            if detail and detail != "sin_detalle":
+                label += f": {detail}"
+            contributions.append((score_value, meta["weight"], label))
+        if not contributions:
+            return "Sin casuísticas destacadas"
+        contributions.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return "; ".join(text for _, _, text in contributions[:3])
+
+    work["casuistica_resumen"] = work.apply(_build_casuistica_resumen, axis=1)
+
+    for extra_col in [
+        "casuistica_score_total",
+        "casuistica_score_promedio",
+        "casuistica_resumen",
+    ]:
+        if extra_col not in columns:
+            columns.append(extra_col)
+    for col in scenario_columns_order:
+        if col not in columns:
+            columns.append(col)
+
     flag_rate_cols = {
         "yo_yo_persona_tasa_flag_emisor": "yo-yo",
         "smurf_persona_tasa_flag_emisor": "fraccionamiento",
@@ -4614,8 +6200,14 @@ def question18_user_risk_scores(
 
     work["abs_net"] = work["net_flow"].abs()
     work = work.sort_values(
-        ["risk_avg_person", "abs_net", "flag_rate_max", "flags_activas"],
-        ascending=[False, False, False, False],
+        [
+            "casuistica_score_total",
+            "risk_avg_person",
+            "abs_net",
+            "flag_rate_max",
+            "flags_activas",
+        ],
+        ascending=[False, False, False, False, False],
     ).head(max(1, int(top_n)))
     work["ranking_prioridad"] = list(range(1, len(work) + 1))
 
@@ -4635,6 +6227,8 @@ def question18_user_risk_scores(
             f"tx por {_format_float(row.get('sum_recv', 0))}, quedando {_format_float(row.get('net_flow', 0))} "
             f"({_direction(float(row.get('net_flow', 0)))}). "
             f"Banderas destacadas: {row.get('banderas_destacadas', 'sin_banderas_destacadas')}. "
+            f"Casuísticas activas: {row.get('casuistica_resumen', 'Sin casuísticas destacadas')}. "
+            f"Score ponderado {row.get('casuistica_score_total', 0):.1f} (promedio {row.get('casuistica_score_promedio', 0):.2f}). "
             f"Desbalance mensual extremo al enviar en {row.get('desbalance_persona_tasa_meses_envia_extremo', 0):.0%} "
             f"de {int(row.get('desbalance_persona_meses_totales', 0))} meses y al recibir en "
             f"{row.get('desbalance_persona_tasa_meses_recibe_extremo', 0):.0%}."
