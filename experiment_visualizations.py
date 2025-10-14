@@ -1,7 +1,7 @@
 """Visualizaciones con Seaborn para las preguntas de `experiment_questions`."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Mapping, Optional
 from textwrap import fill
 
 import matplotlib.pyplot as plt
@@ -219,7 +219,7 @@ def plot_q3_quid_pairs(
     ax: Optional[Axes] = None,
     top_n: int = 10,
 ) -> Axes:
-    """Grafica pares destacados por puntaje quid-pro-quo."""
+    """Grafica pares destacados por puntaje de "algo por algo"."""
     data = question3_quid_pairs(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
@@ -232,7 +232,9 @@ def plot_q3_quid_pairs(
 
     work = data.copy()
     if "nivel_respuesta" in work.columns:
-        work = work.loc[work["nivel_respuesta"] == "par"].copy()
+        work = work.loc[
+            work["nivel_respuesta"] == "resumen_del_par_algo_por_algo"
+        ].copy()
     if work.empty:
         return _render_empty_chart(
             axis,
@@ -242,16 +244,99 @@ def plot_q3_quid_pairs(
         )
 
     work["label"] = (
-        work.get("quid_pair_label", work.get("quid_pair_clave", "sin_par"))
+        work.get(
+            "resumen_personas_involucradas",
+            work.get("identificador_emisor_a_receptor", "sin_par"),
+        )
         .fillna("sin_par")
         .astype(str)
     )
-    work = work.sort_values(["quid_score_max", "quid_tx_count"], ascending=[False, False]).head(top_n)
-    sns.barplot(data=work, x="quid_score_max", y="label", hue="quid_tx_count", ax=axis)
+    work = work.sort_values(
+        [
+            "puntaje_algo_por_algo_mas_alto_en_el_par",
+            "cantidad_movimientos_con_indicio_de_algo_por_algo",
+        ],
+        ascending=[False, False],
+    ).head(top_n)
+    sns.barplot(
+        data=work,
+        x="puntaje_algo_por_algo_mas_alto_en_el_par",
+        y="label",
+        hue="cantidad_movimientos_con_indicio_de_algo_por_algo",
+        ax=axis,
+        palette="Reds",
+    )
     _apply_plot_metadata(axis, "q3_quid_pairs", timeframe)
-    axis.set_xlabel("Puntaje máximo quid-pro-quo")
+    axis.set_xlabel("Puntaje más alto de 'algo por algo'")
     axis.set_ylabel("Par emisor → receptor")
-    axis.legend(title="Transacciones")
+    axis.legend(title="Movimientos detectados")
+    return axis
+
+
+def plot_q3_algo_pair_detalle(
+    record: Mapping[str, Any] | pd.Series,
+    *,
+    ax: Optional[Axes] = None,
+) -> Axes:
+    """Grafica un resumen visual de un solo par "algo por algo"."""
+
+    axis = _ensure_axis(ax, figsize=(7, 4))
+    series = pd.Series(record)
+
+    def _as_float(value: Any) -> float:
+        try:
+            if value is None:
+                return 0.0
+            if isinstance(value, float) and pd.isna(value):
+                return 0.0
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    label = (
+        series.get("resumen_personas_involucradas")
+        or series.get("identificador_emisor_a_receptor")
+    )
+    label = str(label) if label else "Par sin nombre"
+    metrics = pd.DataFrame(
+        {
+            "factor": [
+                "Movimientos sospechosos",
+                "Jefes involucrados (%)",
+                "Textos con aprobación (%)",
+                "Textos con compensación (%)",
+                "Puntaje más alto",
+                "Riesgo máximo",
+            ],
+            "valor": [
+                _as_float(
+                    series.get("cantidad_movimientos_con_indicio_de_algo_por_algo")
+                ),
+                _as_float(
+                    series.get("porcentaje_movimientos_donde_participa_un_jefe")
+                ),
+                _as_float(
+                    series.get("porcentaje_movimientos_con_texto_de_aprobacion")
+                ),
+                _as_float(
+                    series.get("porcentaje_movimientos_con_texto_de_compensacion")
+                ),
+                _as_float(series.get("puntaje_algo_por_algo_mas_alto_en_el_par")),
+                _as_float(series.get("riesgo_maximo_de_los_movimientos_relacionados")),
+            ],
+        }
+    )
+
+    sns.barplot(data=metrics, x="valor", y="factor", palette="Reds", ax=axis)
+    max_value = float(metrics["valor"].max()) if not metrics.empty else 0.0
+    offset = max(max_value * 0.02, 0.2)
+    for index, value in enumerate(metrics["valor"]):
+        axis.text(value + offset, index, f"{value:.1f}", va="center")
+
+    axis.set_title(f"¿Por qué preocupa {label}?", loc="left")
+    axis.set_xlabel("Valor (conteo o porcentaje)")
+    axis.set_ylabel("")
+    axis.grid(True, axis="x", linestyle="--", alpha=0.3)
     return axis
 
 
@@ -1164,6 +1249,7 @@ __all__ = [
     "plot_q1_manager_nlp",
     "plot_q2_manager_concepts",
     "plot_q3_quid_pairs",
+    "plot_q3_algo_pair_detalle",
     "plot_q4_negative_value_vs_load",
     "plot_q5_reference_reuse",
     "plot_q6_centralizers",

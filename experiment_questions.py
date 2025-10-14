@@ -94,7 +94,7 @@ CONCEPT_SPLIT_PATTERN = re.compile(r"[\s,;|/]+")
 QUESTION_TITLES: Dict[str, str] = {
     "q1_manager_nlp": "Q1 – Manager con conceptos NLP sospechosos",
     "q2_manager_concepts": "Q2 – Conceptos NLP con mayor severidad",
-    "q3_quid_pairs": "Q3 – Pares con rasgos Quid Pro Quo",
+    "q3_quid_pairs": "Q3 – Pares con rasgos Algo por Algo",
     "q4_quid_negative_value_vs_load": "Q4 – Autorizaciones con valor negativo vs. carga",
     "q5_reference_reuse": "Q5 – Reutilización de referencias de pago",
     "q6_centralizers": "Q6 – Receptores centralizadores",
@@ -122,6 +122,48 @@ def _format_float(value: Any) -> str:
         return f"{float(value):,.2f}"
     except (TypeError, ValueError):
         return "0.00"
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not pd.isna(value):
+        return bool(value)
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    text = str(value).strip().lower()
+    if not text or text == "nan":
+        return None
+    if text in {"true", "1", "yes", "y", "t"}:
+        return True
+    if text in {"false", "0", "no", "n", "f"}:
+        return False
+    return None
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        if isinstance(value, float) and pd.isna(value):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _count_true(values: Any) -> int:
+    if values is None:
+        return 0
+    series = pd.Series(values)
+    if series.empty:
+        return 0
+    coerced = series.apply(_coerce_bool)
+    if coerced.empty:
+        return 0
+    return int(sum(1 for value in coerced if value))
 
 
 def _coalesce_str(*values: Any, default: str = "sin_valor") -> str:
@@ -912,37 +954,13 @@ def question3_quid_pairs(
     min_score: float = 2.2,
     min_manager_ratio: float = 0.5,
 ) -> pd.DataFrame:
-    """Identifica pares con señales de quid pro quo y los ordena por severidad.
+    """Resume pares donde parece que hubo "algo por algo" de forma muy simple.
 
-    Parameters
-    ----------
-    reports
-        Diccionario de reportes con secciones de casuística quid y detalle de
-        transacciones.
-    timeframe
-        Ventana temporal a evaluar (por defecto ``"todo_el_tiempo"``).
-    min_score
-        Puntaje mínimo ``quid_score_max`` para considerar un par.
-    min_manager_ratio
-        Proporción mínima de interacciones jerárquicas ``quid_manager_ratio``
-        requerida.
-
-    Metodología
-    -----------
-    1. Prioriza el resumen ``casuistica_quid_pro_quo_par`` y el detalle
-       ``casuistica_quid_pro_quo_tx`` del ``timeframe``.
-    2. Filtra pares con puntaje y proporción jerárquica mayores a los umbrales
-       provistos, verificando aprobaciones o compensaciones.
-    3. Si no hay resultados, reconstruye métricas desde ``transaccion`` aplicando
-       un modo relajado que conserva los mejores puntajes disponibles.
-    4. Genera explicaciones incluyendo transacciones destacadas y la indicación
-       de si se relajaron umbrales.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Tabla con pares priorizados, métricas quid pro quo y textos
-        interpretables.
+    El objetivo es explicar con palabras llanas por qué dos personas llaman la
+    atención. Primero busca los resúmenes ya calculados; si no existen, arma las
+    cuentas de cero tomando las transacciones con puntajes altos. Cada fila
+    devuelve números fáciles de leer, un ejemplo concreto y un texto que describe
+    por qué el caso luce riesgoso.
     """
     pairs = _get_section(reports, "casuistica_quid_pro_quo_par", timeframe)
     tx = _get_section(reports, "casuistica_quid_pro_quo_tx", timeframe)
@@ -957,7 +975,60 @@ def question3_quid_pairs(
         "quid_manager_ratio",
         "quid_aprob_ratio",
         "quid_comp_ratio",
+        "quid_aprob_count",
+        "quid_comp_count",
+        "quid_tx_amount_sum",
+        "quid_tx_amount_max",
+        "quid_tx_risk_max",
+        "quid_tx_risk_avg",
+        "quid_tx_first_fecha",
+        "quid_tx_last_fecha",
+        "quid_tx_relaciones",
+        "quid_top_tx_fecha",
+        "quid_top_tx_monto",
+        "quid_top_tx_score",
+        "quid_top_tx_risk",
+        "quid_top_tx_relacion",
+        "quid_top_tx_rel_label",
+        "quid_top_tx_value_vs_load_days",
+        "quid_top_tx_aprob",
+        "quid_top_tx_comp",
+        "quid_top_tx_descripcion",
+        "quid_top_tx_referencia",
+        "quid_top_tx_relajado",
     ]
+
+    pair_column_rename = {
+        "quid_pair_clave": "identificador_emisor_a_receptor",
+        "quid_pair_label": "resumen_personas_involucradas",
+        "quid_tx_count": "cantidad_movimientos_con_indicio_de_algo_por_algo",
+        "quid_score_max": "puntaje_algo_por_algo_mas_alto_en_el_par",
+        "quid_score_avg": "puntaje_algo_por_algo_promedio_en_el_par",
+        "quid_manager_ratio": "porcentaje_movimientos_donde_participa_un_jefe",
+        "quid_aprob_ratio": "porcentaje_movimientos_con_texto_de_aprobacion",
+        "quid_comp_ratio": "porcentaje_movimientos_con_texto_de_compensacion",
+        "quid_aprob_count": "cantidad_movimientos_con_texto_de_aprobacion",
+        "quid_comp_count": "cantidad_movimientos_con_texto_de_compensacion",
+        "quid_tx_amount_sum": "monto_total_de_los_movimientos_relacionados",
+        "quid_tx_amount_max": "monto_mas_alto_de_los_movimientos_relacionados",
+        "quid_tx_risk_max": "riesgo_maximo_de_los_movimientos_relacionados",
+        "quid_tx_risk_avg": "riesgo_promedio_de_los_movimientos_relacionados",
+        "quid_tx_first_fecha": "fecha_del_primer_movimiento_relacionado",
+        "quid_tx_last_fecha": "fecha_del_ultimo_movimiento_relacionado",
+        "quid_tx_relaciones": "tipos_de_relacion_observados_entre_las_personas",
+        "quid_top_tx_fecha": "ejemplo_clave_fecha_del_movimiento",
+        "quid_top_tx_monto": "ejemplo_clave_monto_del_movimiento",
+        "quid_top_tx_score": "ejemplo_clave_puntaje_algo_por_algo",
+        "quid_top_tx_risk": "ejemplo_clave_riesgo_del_movimiento",
+        "quid_top_tx_relacion": "ejemplo_clave_relacion_declarada",
+        "quid_top_tx_rel_label": "ejemplo_clave_relacion_detectada",
+        "quid_top_tx_value_vs_load_days": "ejemplo_clave_dias_entre_carga_y_autorizacion",
+        "quid_top_tx_aprob": "ejemplo_clave_texto_menciona_aprobacion",
+        "quid_top_tx_comp": "ejemplo_clave_texto_menciona_compensacion",
+        "quid_top_tx_descripcion": "ejemplo_clave_texto_libre",
+        "quid_top_tx_referencia": "ejemplo_clave_referencia",
+        "quid_top_tx_relajado": "ejemplo_clave_proviene_de_filtro_relajado",
+    }
 
     if not pairs.empty:
         filtered_pairs = pairs.copy()
@@ -991,8 +1062,14 @@ def question3_quid_pairs(
             )
             if "feat_quid_has_approval" not in fallback_candidates:
                 fallback_candidates["feat_quid_has_approval"] = False
+            fallback_candidates["feat_quid_has_approval"] = fallback_candidates[
+                "feat_quid_has_approval"
+            ].apply(lambda value: bool(_coerce_bool(value)))
             if "feat_quid_has_comp" not in fallback_candidates:
                 fallback_candidates["feat_quid_has_comp"] = False
+            fallback_candidates["feat_quid_has_comp"] = fallback_candidates[
+                "feat_quid_has_comp"
+            ].apply(lambda value: bool(_coerce_bool(value)))
             fallback_pairs = (
                 fallback_candidates.groupby([COL_SENDER_ID, COL_RECEIVER_ID], observed=True)
                 .agg(
@@ -1041,28 +1118,34 @@ def question3_quid_pairs(
                 ).head(10)
                 pair_df = relaxed_pairs.reindex(columns=pair_columns + ["criterio_relajado"])
 
-    pair_df["nivel_respuesta"] = "par"
+    pair_df["nivel_respuesta"] = "resumen_del_par"
     pair_df["timeframe"] = timeframe
-    if not pair_df.empty:
-        pair_df["interpretabilidad"] = pair_df.apply(
-            lambda row: (
-                f"El par '{_coalesce_str(row.get('quid_pair_label'), row.get('quid_pair_clave'), default='sin_identificar')}' "
-                f"acumuló {int(row.get('quid_tx_count', 0))} transacciones con puntaje máximo "
-                f"{row.get('quid_score_max', 0):.2f} (≥{min_score}), promedio {row.get('quid_score_avg', 0):.2f} y "
-                f"ratio jerárquico {row.get('quid_manager_ratio', 0):.2f}; aprobaciones dentro de la ventana: "
-                f"{row.get('quid_aprob_ratio', 0):.2f}, compensaciones {row.get('quid_comp_ratio', 0):.2f}."
-                + (
-                    " Se relajó el umbral para destacar los puntajes más altos disponibles."  # type: ignore[arg-type]
-                    if row.get("criterio_relajado")
-                    else ""
-                )
-            ),
-            axis=1,
-        )
-    else:
-        pair_df["interpretabilidad"] = pd.Series(dtype="object")
-    if "criterio_relajado" in pair_df:
-        pair_df = pair_df.drop(columns=["criterio_relajado"])
+    for ratio_column in ("quid_manager_ratio", "quid_aprob_ratio", "quid_comp_ratio"):
+        if ratio_column in pair_df.columns:
+            pair_df[ratio_column] = pd.to_numeric(
+                pair_df[ratio_column], errors="coerce"
+            ) * 100.0
+    string_pair_columns = [
+        "quid_tx_first_fecha",
+        "quid_tx_last_fecha",
+        "quid_tx_relaciones",
+        "quid_top_tx_fecha",
+        "quid_top_tx_relacion",
+        "quid_top_tx_rel_label",
+        "quid_top_tx_descripcion",
+        "quid_top_tx_referencia",
+    ]
+    bool_pair_columns = [
+        "quid_top_tx_aprob",
+        "quid_top_tx_comp",
+        "quid_top_tx_relajado",
+    ]
+    for column in string_pair_columns:
+        if column in pair_df.columns:
+            pair_df[column] = pair_df[column].astype("object")
+    for column in bool_pair_columns:
+        if column in pair_df.columns:
+            pair_df[column] = pair_df[column].astype("object")
 
     tx_columns = [
         "fecha_hora_ts",
@@ -1079,6 +1162,24 @@ def question3_quid_pairs(
         "reference_number_trans_desc",
         "risk_score",
     ]
+
+    tx_column_rename = {
+        "fecha_hora_ts": "fecha_y_hora_del_movimiento",
+        COL_SENDER_ID: "id_persona_que_envia",
+        COL_RECEIVER_ID: "id_persona_que_recibe",
+        COL_AMOUNT: "monto_del_movimiento",
+        "relacion": "relacion_declarada_en_el_movimiento",
+        "feat_quid_rel_label": "relacion_detectada_por_el_modelo_algo_por_algo",
+        "feat_quid_has_approval": "texto_libre_menciona_aprobacion",
+        "feat_quid_has_comp": "texto_libre_menciona_compensacion",
+        "feat_quid_value_vs_load_days": "dias_entre_carga_y_autorizacion_del_movimiento",
+        "feat_quid_score": "puntaje_algo_por_algo_del_movimiento",
+        "descripcion": "texto_libre_del_movimiento",
+        "reference_number_trans_desc": "referencia_del_movimiento",
+        "risk_score": "riesgo_estimado_del_movimiento",
+    }
+
+    output_rename = {**pair_column_rename, **tx_column_rename}
 
     if not tx.empty:
         filtered_tx = tx.loc[tx.get("feat_quid_score", 0) >= min_score].copy()
@@ -1103,34 +1204,408 @@ def question3_quid_pairs(
     else:
         tx_df = pd.DataFrame(columns=tx_columns)
 
-    tx_df["nivel_respuesta"] = "transaccion"
+    tx_df["nivel_respuesta"] = "movimiento_detallado"
     tx_df["timeframe"] = timeframe
     if not tx_df.empty:
-        tx_df["interpretabilidad"] = tx_df.apply(
-            lambda row: (
-                f"La transacción del {row.get('fecha_hora_ts', 'sin_fecha')} entre "
-                f"{_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
-                f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')} "
-                f"alcanzó un puntaje quid-pro-quo de {row.get('feat_quid_score', 0):.2f} (umbral {min_score}), "
-                f"con valor {_format_float(row.get(COL_AMOUNT, 0))} y desfase autorización-carga "
-                f"de {row.get('feat_quid_value_vs_load_days', 0)} días; aprobaciones asociadas: "
-                f"{bool(row.get('feat_quid_has_approval', False))}, compensaciones: "
-                f"{bool(row.get('feat_quid_has_comp', False))}."
-                + (
-                    " Se listó con umbral relajado al no hallarse casos ≥ objetivo."  # type: ignore[arg-type]
-                    if row.get("criterio_relajado")
-                    else ""
+        def _describe_tx_row(row: pd.Series) -> str:
+            fecha = _coalesce_str(row.get("fecha_hora_ts"), default="sin_fecha")
+            emisor = _coalesce_str(row.get(COL_SENDER_ID), default="emisor_desconocido")
+            receptor = _coalesce_str(row.get(COL_RECEIVER_ID), default="receptor_desconocido")
+            monto = _format_float(row.get(COL_AMOUNT, 0))
+            score = _safe_float(row.get("feat_quid_score")) or 0.0
+            delta = row.get("feat_quid_value_vs_load_days")
+            if pd.isna(delta):
+                delta_text = "sin dato de diferencia de días"
+            else:
+                delta_val = int(round(float(delta)))
+                if delta_val < 0:
+                    delta_text = f"se cargó {abs(delta_val)} días antes de la autorización"
+                elif delta_val > 0:
+                    delta_text = f"la autorización llegó {delta_val} días después"
+                else:
+                    delta_text = "la autorización llegó el mismo día"
+            aprob_flag = _coerce_bool(row.get("feat_quid_has_approval"))
+            if aprob_flag is None:
+                aprob_text = "sin dato"
+            else:
+                aprob_text = "sí" if aprob_flag else "no"
+            comp_flag = _coerce_bool(row.get("feat_quid_has_comp"))
+            if comp_flag is None:
+                comp_text = "sin dato"
+            else:
+                comp_text = "sí" if comp_flag else "no"
+            partes = [
+                f"El {fecha} {emisor} movió {monto} hacia {receptor}.",
+                f"Puntaje 'algo por algo': {score:.2f} (meta {min_score}).",
+                f"Diferencia carga-autorización: {delta_text}.",
+                f"Palabra de aprobación: {aprob_text}; palabra de compensación: {comp_text}.",
+            ]
+            if _coerce_bool(row.get("criterio_relajado")):
+                partes.append(
+                    "Salió al relajar el filtro porque no había ejemplos más claros en la ventana."
                 )
-            ),
+            return " ".join(partes)
+
+        tx_df["interpretabilidad"] = tx_df.apply(_describe_tx_row, axis=1)
+    else:
+        tx_df["interpretabilidad"] = pd.Series(dtype="object")
+
+    pair_enrichment = pd.DataFrame()
+    if (
+        not pair_df.empty
+        and not tx_df.empty
+        and {COL_SENDER_ID, COL_RECEIVER_ID}.issubset(tx_df.columns)
+    ):
+        tx_for_enrichment = tx_df.copy()
+        if "nivel_respuesta" in tx_for_enrichment.columns:
+            tx_for_enrichment = tx_for_enrichment.loc[
+                tx_for_enrichment["nivel_respuesta"] == "movimiento_detallado"
+            ].copy()
+        sender_series = tx_for_enrichment.get(COL_SENDER_ID)
+        receiver_series = tx_for_enrichment.get(COL_RECEIVER_ID)
+        if sender_series is not None and receiver_series is not None:
+            sender_values = sender_series.astype(str)
+            receiver_values = receiver_series.astype(str)
+            sender_values = sender_values.where(~sender_values.str.lower().eq("nan"), "")
+            receiver_values = receiver_values.where(~receiver_values.str.lower().eq("nan"), "")
+            tx_for_enrichment["__pair_key__"] = sender_values + "->" + receiver_values
+            tx_for_enrichment = tx_for_enrichment.loc[
+                tx_for_enrichment["__pair_key__"] != "->"
+            ].copy()
+            valid_pairs = (
+                pair_df.get("quid_pair_clave", pd.Series(dtype=str))
+                .dropna()
+                .astype(str)
+                .unique()
+            )
+            if len(valid_pairs):
+                tx_for_enrichment = tx_for_enrichment.loc[
+                    tx_for_enrichment["__pair_key__"].isin(valid_pairs)
+                ].copy()
+            else:
+                tx_for_enrichment = tx_for_enrichment.iloc[0:0]
+            if not tx_for_enrichment.empty:
+                records: list[dict[str, Any]] = []
+                for pair_key, group in tx_for_enrichment.groupby(
+                    "__pair_key__", observed=True
+                ):
+                    record: dict[str, Any] = {"quid_pair_clave": pair_key}
+                    record["quid_aprob_count"] = _count_true(
+                        group.get("feat_quid_has_approval")
+                    )
+                    record["quid_comp_count"] = _count_true(
+                        group.get("feat_quid_has_comp")
+                    )
+                    if COL_AMOUNT in group:
+                        amount_series = pd.to_numeric(
+                            group[COL_AMOUNT], errors="coerce"
+                        )
+                        if not amount_series.empty:
+                            record["quid_tx_amount_sum"] = float(
+                                amount_series.fillna(0).sum()
+                            )
+                            if amount_series.notna().any():
+                                record["quid_tx_amount_max"] = float(
+                                    amount_series.max()
+                                )
+                    if "risk_score" in group:
+                        risk_series = pd.to_numeric(
+                            group["risk_score"], errors="coerce"
+                        )
+                        if risk_series.notna().any():
+                            record["quid_tx_risk_max"] = float(risk_series.max())
+                            record["quid_tx_risk_avg"] = float(risk_series.mean())
+                    date_col = "fecha_hora_ts" if "fecha_hora_ts" in group else None
+                    if date_col is None and "fecha_hora" in group:
+                        date_col = "fecha_hora"
+                    if date_col:
+                        chronological = group.dropna(subset=[date_col]).sort_values(
+                            date_col
+                        )
+                        if not chronological.empty:
+                            record["quid_tx_first_fecha"] = chronological.iloc[0].get(
+                                date_col
+                            )
+                            record["quid_tx_last_fecha"] = chronological.iloc[-1].get(
+                                date_col
+                            )
+                    relations: list[str] = []
+                    if COL_RELATION in group:
+                        relations.extend(
+                            group[COL_RELATION].dropna().astype(str).tolist()
+                        )
+                    if "feat_quid_rel_label" in group:
+                        relations.extend(
+                            group["feat_quid_rel_label"].dropna().astype(str).tolist()
+                        )
+                    relations = [
+                        rel.strip()
+                        for rel in relations
+                        if rel and rel.lower() != "nan"
+                    ]
+                    if relations:
+                        record["quid_tx_relaciones"] = ", ".join(
+                            dict.fromkeys(relations)
+                        )
+                    sort_by: list[str] = []
+                    ascending: list[bool] = []
+                    if "feat_quid_score" in group:
+                        sort_by.append("feat_quid_score")
+                        ascending.append(False)
+                    if "risk_score" in group:
+                        sort_by.append("risk_score")
+                        ascending.append(False)
+                    if date_col:
+                        sort_by.append(date_col)
+                        ascending.append(True)
+                    group_sorted = (
+                        group.sort_values(sort_by, ascending=ascending)
+                        if sort_by
+                        else group
+                    )
+                    top_tx = group_sorted.iloc[0]
+                    record["quid_top_tx_fecha"] = (
+                        top_tx.get(date_col) if date_col else None
+                    )
+                    record["quid_top_tx_monto"] = (
+                        _safe_float(top_tx.get(COL_AMOUNT))
+                        if COL_AMOUNT in group
+                        else None
+                    )
+                    record["quid_top_tx_score"] = _safe_float(
+                        top_tx.get("feat_quid_score")
+                    )
+                    record["quid_top_tx_risk"] = _safe_float(
+                        top_tx.get("risk_score")
+                    )
+                    relation_val = (
+                        _coalesce_str(top_tx.get(COL_RELATION), default="")
+                        if COL_RELATION in group
+                        else ""
+                    )
+                    record["quid_top_tx_relacion"] = relation_val or None
+                    rel_label_val = (
+                        _coalesce_str(top_tx.get("feat_quid_rel_label"), default="")
+                        if "feat_quid_rel_label" in group
+                        else ""
+                    )
+                    record["quid_top_tx_rel_label"] = rel_label_val or None
+                    record["quid_top_tx_value_vs_load_days"] = _safe_float(
+                        top_tx.get("feat_quid_value_vs_load_days")
+                    )
+                    record["quid_top_tx_aprob"] = _coerce_bool(
+                        top_tx.get("feat_quid_has_approval")
+                    )
+                    record["quid_top_tx_comp"] = _coerce_bool(
+                        top_tx.get("feat_quid_has_comp")
+                    )
+                    descripcion = _coalesce_str(
+                        top_tx.get("descripcion"),
+                        top_tx.get(COL_DESCRIPTION),
+                        default="",
+                    )
+                    record["quid_top_tx_descripcion"] = descripcion or None
+                    referencia = _coalesce_str(
+                        top_tx.get("reference_number_trans_desc"),
+                        default="",
+                    )
+                    record["quid_top_tx_referencia"] = referencia or None
+                    record["quid_top_tx_relajado"] = bool(
+                        _coerce_bool(top_tx.get("criterio_relajado"))
+                    )
+                    records.append(record)
+                if records:
+                    pair_enrichment = pd.DataFrame(records)
+    if not pair_enrichment.empty:
+        enrichment_indexed = pair_enrichment.set_index("quid_pair_clave")
+        pair_df = pair_df.set_index("quid_pair_clave")
+        pair_df.update(enrichment_indexed)
+        pair_df = pair_df.reset_index()
+
+    def _stringify(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float) and pd.isna(value):
+            return ""
+        text = str(value)
+        return "" if not text or text.lower() == "nan" else text
+
+    def _describe_pair_row(row: pd.Series) -> str:
+        label = _coalesce_str(
+            row.get("quid_pair_label"),
+            row.get("quid_pair_clave"),
+            default="sin_identificar",
+        )
+        count_value = _safe_float(row.get("quid_tx_count")) or 0.0
+        count = int(round(count_value)) if count_value else 0
+        max_score = _safe_float(row.get("quid_score_max")) or 0.0
+        avg_score = _safe_float(row.get("quid_score_avg")) or 0.0
+        parts: list[str] = []
+        if count:
+            parts.append(
+                f"{label}: hallamos {count} movimientos que parecen un 'algo por algo'."
+            )
+        else:
+            parts.append(
+                f"{label}: hallamos movimientos que parecen un 'algo por algo'."
+            )
+        parts.append(
+            f"El puntaje más alto fue {max_score:.2f} (meta {min_score}) y el promedio quedó en {avg_score:.2f}."
+        )
+        manager_percent = _safe_float(row.get("quid_manager_ratio")) or 0.0
+        if manager_percent:
+            parts.append(
+                f"En {manager_percent:.0f}% de los movimientos participó alguien con rol de jefe."
+            )
+        aprob_percent = _safe_float(row.get("quid_aprob_ratio")) or 0.0
+        aprob_count_val = _safe_float(row.get("quid_aprob_count"))
+        if aprob_percent:
+            if aprob_count_val is not None:
+                parts.append(
+                    f"Palabras de aprobación aparecieron en {aprob_percent:.0f}% de los casos ({int(round(aprob_count_val))} movimientos)."
+                )
+            else:
+                parts.append(
+                    f"Palabras de aprobación aparecieron en {aprob_percent:.0f}% de los casos."
+                )
+        comp_percent = _safe_float(row.get("quid_comp_ratio")) or 0.0
+        comp_count_val = _safe_float(row.get("quid_comp_count"))
+        if comp_percent:
+            if comp_count_val is not None:
+                parts.append(
+                    f"Menciones de compensación salieron en {comp_percent:.0f}% de los casos ({int(round(comp_count_val))} movimientos)."
+                )
+            else:
+                parts.append(
+                    f"Menciones de compensación salieron en {comp_percent:.0f}% de los casos."
+                )
+        total_amount = _safe_float(row.get("quid_tx_amount_sum"))
+        max_amount = _safe_float(row.get("quid_tx_amount_max"))
+        if total_amount is not None:
+            parts.append(
+                f"Los montos ligados a este par suman {_format_float(total_amount)}."
+            )
+        if max_amount is not None:
+            parts.append(
+                f"El movimiento más alto dentro del grupo fue de {_format_float(max_amount)}."
+            )
+        risk_max = _safe_float(row.get("quid_tx_risk_max"))
+        risk_avg = _safe_float(row.get("quid_tx_risk_avg"))
+        if risk_max is not None or risk_avg is not None:
+            if risk_max is None:
+                risk_max = risk_avg
+            if risk_avg is None:
+                risk_avg = risk_max
+            if risk_max is not None and risk_avg is not None:
+                parts.append(
+                    f"El riesgo calculado llegó a {risk_max:.2f} y en promedio quedó en {risk_avg:.2f}."
+                )
+        first_fecha = _stringify(row.get("quid_tx_first_fecha"))
+        last_fecha = _stringify(row.get("quid_tx_last_fecha"))
+        if first_fecha and last_fecha:
+            if first_fecha == last_fecha:
+                parts.append(f"Todo apunta al día {first_fecha}.")
+            else:
+                parts.append(
+                    f"Los movimientos sospechosos van de {first_fecha} a {last_fecha}."
+                )
+        elif first_fecha:
+            parts.append(f"Todo apunta al día {first_fecha}.")
+        relaciones_text = _stringify(row.get("quid_tx_relaciones"))
+        if relaciones_text:
+            parts.append(f"Relación reportada: {relaciones_text}.")
+        top_fecha = _stringify(row.get("quid_top_tx_fecha"))
+        if top_fecha:
+            top_bits: list[str] = [f"Ejemplo claro: {top_fecha}"]
+            top_monto = _safe_float(row.get("quid_top_tx_monto"))
+            if top_monto is not None:
+                top_bits.append(f"por {_format_float(top_monto)}")
+            top_score = _safe_float(row.get("quid_top_tx_score"))
+            if top_score is not None:
+                top_bits.append(f"puntaje {top_score:.2f}")
+            top_risk = _safe_float(row.get("quid_top_tx_risk"))
+            if top_risk is not None:
+                top_bits.append(f"riesgo {top_risk:.2f}")
+            relation_bits = [
+                bit
+                for bit in (
+                    _stringify(row.get("quid_top_tx_rel_label")),
+                    _stringify(row.get("quid_top_tx_relacion")),
+                )
+                if bit
+            ]
+            if relation_bits:
+                top_bits.append("relación " + " / ".join(relation_bits))
+            top_delta = _safe_float(row.get("quid_top_tx_value_vs_load_days"))
+            if top_delta is not None:
+                if top_delta < 0:
+                    top_bits.append(
+                        f"se cargó {abs(int(round(top_delta)))} días antes de autorizarse"
+                    )
+                elif top_delta > 0:
+                    top_bits.append(
+                        f"se autorizó {int(round(top_delta))} días después"
+                    )
+                else:
+                    top_bits.append("se autorizó el mismo día")
+            evidencias: list[str] = []
+            aprob_bool = _coerce_bool(row.get("quid_top_tx_aprob"))
+            if aprob_bool is not None:
+                evidencias.append(
+                    "menciona aprobación" if aprob_bool else "sin aprobación"
+                )
+            comp_bool = _coerce_bool(row.get("quid_top_tx_comp"))
+            if comp_bool is not None:
+                evidencias.append(
+                    "menciona compensación" if comp_bool else "sin compensación"
+                )
+            if evidencias:
+                top_bits.append("; ".join(evidencias))
+            descripcion_text = _stringify(row.get("quid_top_tx_descripcion"))
+            if descripcion_text:
+                top_bits.append(f"texto: {descripcion_text}")
+            referencia_text = _stringify(row.get("quid_top_tx_referencia"))
+            if referencia_text:
+                top_bits.append(f"referencia: {referencia_text}")
+            if _coerce_bool(row.get("quid_top_tx_relajado")):
+                top_bits.append("salió al relajar el filtro")
+            parts.append(". ".join(top_bits) + ".")
+        if _coerce_bool(row.get("criterio_relajado")):
+            parts.append(
+                "Lo mostramos aunque quedó justo debajo del filtro original para no perder la pista."
+            )
+        return " ".join(part.strip() for part in parts if part).strip()
+
+    if not pair_df.empty:
+        pair_df["interpretabilidad"] = pair_df.apply(
+            _describe_pair_row,
             axis=1,
         )
     else:
-        tx_df["interpretabilidad"] = pd.Series(dtype="object")
+        pair_df["interpretabilidad"] = pd.Series(dtype="object")
+    if "criterio_relajado" in pair_df:
+        pair_df = pair_df.drop(columns=["criterio_relajado"])
     if "criterio_relajado" in tx_df:
         tx_df = tx_df.drop(columns=["criterio_relajado"])
 
     combined = pd.concat([pair_df, tx_df], ignore_index=True, sort=False)
-    ordered_cols = ["timeframe", "nivel_respuesta"] + [c for c in pair_columns + tx_columns if c in combined.columns]
+    combined = combined.rename(columns=output_rename)
+    if "nivel_respuesta" in combined:
+        combined["nivel_respuesta"] = combined["nivel_respuesta"].replace(
+            {
+                "resumen_del_par": "resumen_del_par_algo_por_algo",
+                "movimiento_detallado": "movimiento_detallado_algo_por_algo",
+            }
+        )
+    ordered_cols = [
+        "timeframe",
+        "nivel_respuesta",
+        *[
+            output_rename.get(column, column)
+            for column in pair_columns + tx_columns
+            if output_rename.get(column, column) in combined.columns
+        ],
+    ]
     ordered_cols = list(dict.fromkeys(ordered_cols)) + ["interpretabilidad"]
     return combined.reindex(columns=ordered_cols)
 
@@ -1240,26 +1715,25 @@ def question4_quid_negative_value_vs_load(
     result["responsable_user_id"] = result.apply(_responsable, axis=1)
     def _describe_quid(row: pd.Series) -> str:
         delta = row.get("feat_quid_value_vs_load_days")
-        if pd.notna(delta) and float(delta) < 0:
-            dias = abs(int(delta))
-            delta_txt = (
-                f"se cargó {dias} días antes de tener una autorización, un desfase negativo que"
-                " levanta sospechas"
-            )
-        elif pd.notna(delta):
-            delta_txt = f"mostró una diferencia de {int(delta)} días entre la carga y la autorización"
+        if pd.notna(delta):
+            delta_val = int(round(float(delta)))
+            if delta_val < 0:
+                delta_txt = f"se registró {abs(delta_val)} días antes de la autorización"
+            elif delta_val > 0:
+                delta_txt = f"la autorización tardó {delta_val} días"
+            else:
+                delta_txt = "la autorización llegó el mismo día"
         else:
-            delta_txt = "no tiene registro claro del desfase entre carga y autorización"
+            delta_txt = "no sabemos cuántos días pasaron entre la carga y la autorización"
         base = (
-            f"Durante '{timeframe}', la transacción del {row.get('fecha_hora_ts', 'sin_fecha')} "
+            f"En '{timeframe}', la transacción del {row.get('fecha_hora_ts', 'sin_fecha')} "
             f"entre {_coalesce_str(row.get(COL_SENDER_ID), default='emisor_desconocido')} y "
             f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='receptor_desconocido')} {delta_txt}. "
-            f"El puntaje quid-pro-quo asociado es {row.get('feat_quid_score', 0):.2f}. "
-            f"La persona que debería revisar la situación es "
-            f"{row.get('responsable_user_id', 'sin_responsable')}."
+            f"El puntaje 'algo por algo' es {row.get('feat_quid_score', 0):.2f}. "
+            f"La persona que debe revisarla es {row.get('responsable_user_id', 'sin_responsable')}."
         )
         if relaxed:
-            base += " Se muestran los casos con los desfases o puntajes más llamativos aunque no sean negativos, para no perderlos de vista."
+            base += " Se incluyeron los desfases más raros aunque no sean negativos para mantenerlos vigilados."
         return base
 
     result["interpretabilidad"] = result.apply(_describe_quid, axis=1)
@@ -4090,7 +4564,7 @@ def question18_user_risk_scores(
         "umbral_persona_tasa_flag_cercania": "cercano a umbral",
         "red_persona_tasa_en_ciclos": "ciclos en red",
         "red_persona_tasa_en_triangulos": "triángulos en red",
-        "quid_pro_quo_persona_tasa_flag": "quid pro quo",
+        "quid_pro_quo_persona_tasa_flag": "algo por algo",
         "referencia_persona_tasa_reutilizada": "referencia reutilizada",
         "cambio_brusco_persona_tasa_flag": "cambio brusco",
         "nuevo_enlace_persona_tasa_flag": "nuevo enlace",
