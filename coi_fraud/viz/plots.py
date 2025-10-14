@@ -234,7 +234,7 @@ def plot_smurf_chronic(reports, timeframe="todo_el_tiempo", ax=None, top_n=25):
     tx = _get_tx(reports, timeframe)
     ax = _ensure_ax(ax)
     if tx.empty or "month_id" not in tx:
-        ax.set_title(f"Smurfing crónico — {timeframe} (sin datos)")
+        ax.set_title(f"Fraccionamiento crónico — {timeframe} (sin datos)")
         return ax
     tmp = tx[["month_id", COL_SENDER_ID, COL_RECEIVER_ID, "sig_smurf"]].copy()
     tmp["pair"] = tmp[COL_SENDER_ID].astype(str) + "→" + tmp[COL_RECEIVER_ID].astype(str)
@@ -250,7 +250,7 @@ def plot_smurf_chronic(reports, timeframe="todo_el_tiempo", ax=None, top_n=25):
         .head(top_n)
     )
     sns.barplot(data=agg, x="meses_smurf", y="pair", ax=ax)
-    ax.set_title(f"Smurfing crónico (meses con señal) — {timeframe}")
-    ax.set_xlabel("meses_smurf")
+    ax.set_title(f"Fraccionamiento crónico (meses con señal) — {timeframe}")
+    ax.set_xlabel("meses_fraccionamiento")
     ax.set_ylabel("pair")
     return ax

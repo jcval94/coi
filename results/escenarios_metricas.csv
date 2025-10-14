@@ -11,7 +11,7 @@ q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,ultimo_mes,0.0
 q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,ultimo_mes,0.009835880000537145,1
 q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,ultimo_mes,0.029545387999860395,0
 q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,ultimo_mes,0.01617404499938857,2
-q12_smurfing_chronic,Q12 – Smurfing crónico,ultimo_mes,0.04363098799967702,11
+q12_smurfing_chronic,Q12 – Fraccionamiento crónico,ultimo_mes,0.04363098799967702,11
 q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,ultimo_mes,0.034788182999363926,11
 q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,ultimo_mes,0.010172735000196553,11
 q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,ultimo_mes,0.007709935999628215,10
@@ -28,7 +28,7 @@ q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,ultimos_3_mese
 q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,ultimos_3_meses,0.010383410999565967,1
 q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,ultimos_3_meses,0.05707146499935334,0
 q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,ultimos_3_meses,0.016450864999569603,5
-q12_smurfing_chronic,Q12 – Smurfing crónico,ultimos_3_meses,0.07392576800066308,25
+q12_smurfing_chronic,Q12 – Fraccionamiento crónico,ultimos_3_meses,0.07392576800066308,25
 q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,ultimos_3_meses,0.06621325700052694,28
 q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,ultimos_3_meses,0.010452544999679958,25
 q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,ultimos_3_meses,0.00795935600035591,10
@@ -45,7 +45,7 @@ q8_case13_new_employees,Q8 – Receptores nuevos con montos altos,todo_el_tiempo
 q9_case14_veterans_from_newcomers,Q9 – Veteranos que reciben de emisores nuevos,todo_el_tiempo,0.002302798000528128,1
 q10_yoyo_streaks,Q10 – Rachas Yo-Yo prolongadas,todo_el_tiempo,2.484734136000043,1
 q11_near_threshold_structuring,Q11 – Montos pegados a umbrales regulatorios,todo_el_tiempo,0.015251202999934321,5
-q12_smurfing_chronic,Q12 – Smurfing crónico,todo_el_tiempo,2.112431492999349,25
+q12_smurfing_chronic,Q12 – Fraccionamiento crónico,todo_el_tiempo,2.112431492999349,25
 q13_bad_loans_with_frequency,Q13 – Préstamos incumplidos con ráfagas de frecuencia,todo_el_tiempo,1.867980222999904,50
 q14_recurrent_payroll,Q14 – Pagos recurrentes tipo nómina,todo_el_tiempo,0.014307587999610405,25
 q15_coordinated_cluster_signals,Q15 – Clusters con señales coordinadas,todo_el_tiempo,0.008063648000643298,1

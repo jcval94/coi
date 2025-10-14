@@ -429,18 +429,18 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.tight_layout()
     plt.show()
     ```
-- **Q12 – Smurfing crónico** (`question12_smurfing_chronic`):
+- **Q12 – Fraccionamiento crónico** (`question12_smurfing_chronic`):
   - **¿Qué detecta?** Pares que dividen depósitos grandes en muchas transferencias pequeñas (por ejemplo, cinco pagos de 2 000 $) para evitar que un control detecte de golpe los 10 000 $ o 20 000 $ que realmente están moviendo.
   - **Analogía rápida:** Es como si alguien quisiera pasar un costal de arena por una báscula con límite de 10 kg. En vez de cargar un solo costal de 30 kg (que dispararía la alarma), reparte la arena en tres costales de 10 kg y los pasa uno a la vez.
-  - **¿Cómo lo hace el código?** El `SmurfingDetector` ordena las transacciones por par emisor→receptor y, dentro de una ventana móvil de 7 días (`smurf_window_days`), suma los montos. Si la suma alcanza 10 000 $ o 20 000 $ (`smurf_thresholds = [10 000, 20 000]`) sin que ninguna transacción individual cruce ese umbral, marca `sig_smurf = True`. Cuando la bandera no existe, la función recalcula la alerta usando cuantiles (umbral 25 %) para identificar montos pequeños repetidos y reconstruir la señal.
-  - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con smurfing, 3 por defecto). Este filtro asegura que solo aparezcan pares con recurrencia. Ejemplo: si un par tiene smurfing en enero, febrero y abril, `meses_con_smurf = 3`. Al correr `question12_smurfing_chronic(..., min_months=4)` quedará fuera porque no llega a cuatro meses diferentes.
-  - **Columnas de salida relevantes:** `meses_con_smurf` (en cuántos meses distintos apareció la señal), `tx_smurf_totales` (cuántas transacciones pequeñas participaron), `monto_smurf_total` (suma de montos), `riesgo_promedio_mes` y `riesgo_max` (niveles de riesgo), además de `tendencia_riesgo` para resumir si la alerta va al alza, a la baja o se mantiene estable.
+  - **¿Cómo lo hace el código?** El detector de fraccionamiento (`SmurfingDetector`) ordena las transacciones por par emisor→receptor y, dentro de una ventana móvil de 7 días (`smurf_window_days`), suma los montos. Si la suma alcanza 10 000 $ o 20 000 $ (`smurf_thresholds = [10 000, 20 000]`) sin que ninguna transacción individual cruce ese umbral, marca `sig_smurf = True`. Cuando la bandera no existe, la función recalcula la alerta usando cuantiles (umbral 25 %) para identificar montos pequeños repetidos y reconstruir la señal.
+  - **Parámetros clave:** `timeframe`; `min_months` (opcional). Cuando se omite, el análisis prioriza el monto fraccionado total sin exigir recurrencia mensual. Si necesitas filtrar por persistencia, ajusta `min_months` a la cantidad deseada.
+  - **Columnas de salida relevantes:** `meses_con_fraccionamiento` (en cuántos meses distintos apareció la señal), `transacciones_fraccionadas` (cuántas operaciones pequeñas participaron), `monto_fraccionado_total` (suma de montos), `riesgo_promedio` y `riesgo_maximo` (niveles de riesgo), además de `tendencia_riesgo` para resumir si la alerta va al alza, a la baja o se mantiene estable.
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question12_smurfing_chronic
 
-    q12 = question12_smurfing_chronic(reports, timeframe="todo_el_tiempo", min_months=4)
-    print(q12[["pair", "meses_con_smurf", "monto_smurf_total"]].head())
+    q12 = question12_smurfing_chronic(reports, timeframe="todo_el_tiempo")
+    print(q12[["pair", "meses_con_fraccionamiento", "monto_fraccionado_total"]].head())
     ```
   - **Visualización rápida:**
     ```python
@@ -498,7 +498,7 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q15 – Clusters con señales coordinadas** (`question15_coordinated_cluster_signals`):
-  - **¿Qué detecta?** Grupos de personas conectadas entre sí que acumulan varias señales (yo-yo, smurf, quid, etc.) al mismo tiempo.
+  - **¿Qué detecta?** Grupos de personas conectadas entre sí que acumulan varias señales (yo-yo, fraccionamiento, quid, etc.) al mismo tiempo.
   - **¿Cómo lo hace?** Lee `reports["clusters_personas"][timeframe]`, suma cuántas señales activas tiene cada cluster, normaliza los montos y ordena los resultados por número de señales, riesgo máximo y volumen. El texto final resalta a la persona más desbalanceada y explica qué porcentaje aporta cada señal.
   - **Parámetros clave:** `timeframe`; `top_n` (número de clusters a mostrar, 10 por defecto).
   - **Ejemplo de uso:**
@@ -520,8 +520,8 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     ```
 
 - **Q16 – Transacciones con múltiples señales simultáneas** (`question16_multisignal_transactions`):
-  - **¿Qué detecta?** Operaciones individuales que prenden varias alarmas a la vez (por ejemplo, jerarquía + yo-yo + smurf).
-  - **¿Cómo lo hace?** Revisa `reports["transaccion"][timeframe]` y cuenta cuántas banderas se activan por transacción (jerarquía, yo-yo, smurf, near-threshold, quid y cambios bruscos). Prioriza las que tienen tres o más señales y, si hay pocos casos, baja el umbral para mostrar ejemplos representativos.
+  - **¿Qué detecta?** Operaciones individuales que prenden varias alarmas a la vez (por ejemplo, jerarquía + yo-yo + fraccionamiento).
+  - **¿Cómo lo hace?** Revisa `reports["transaccion"][timeframe]` y cuenta cuántas banderas se activan por transacción (jerarquía, yo-yo, fraccionamiento, near-threshold, quid y cambios bruscos). Prioriza las que tienen tres o más señales y, si hay pocos casos, baja el umbral para mostrar ejemplos representativos.
   - **Parámetros clave:** `timeframe`; `top_n` (máximo de transacciones en el listado, 25 por defecto).
   - **Ejemplo de uso:**
     ```python
@@ -601,7 +601,7 @@ python -m coi_fraud --csv ./mis_transacciones.csv --out ./forensic_outputs
 | --- | --- | --- |
 | **Quid Pro Quo** (`sig_quid_pro_quo`, `feat_quid_score`, `feat_quid_value_vs_load_days`, `feat_quid_rel_label`) | Banderas que alertan sobre posibles intercambios de favores entre jefes y subordinados. | Combina relaciones jerárquicas, palabras clave de aprobaciones o compensaciones, montos fuera de lo normal, cercanía a umbrales y desfases entre carga y valor. Con todo eso calcula un puntaje; si rebasa el umbral, activa la señal y guarda los datos por par.【F:coi_fraud/features/quid.py†L176-L287】 |
 | **Yo-Yo** (`sig_yoyo`) | Detecta pares que se envían dinero de ida y vuelta con montos casi iguales. | Agrupa el par en ambas direcciones, ordena por tiempo y prende la bandera cuando identifica transferencias opuestas en pocas horas con diferencias mínimas.【F:coi_fraud/features/yoyo.py†L7-L43】 |
-| **Smurfing** (`sig_smurf`) | Señala depósitos divididos en partes pequeñas que, sumados, cruzan un umbral. | Ordena las operaciones por par, recorre ventanas de días y enciende la señal si el acumulado supera los límites configurados sin que ningún pago individual lo haga.【F:coi_fraud/features/smurf.py†L7-L48】 |
+| **Fraccionamiento** (`sig_smurf`) | Señala depósitos divididos en partes pequeñas que, sumados, cruzan un umbral. | Ordena las operaciones por par, recorre ventanas de días y enciende la señal si el acumulado supera los límites configurados sin que ningún pago individual lo haga.【F:coi_fraud/features/smurf.py†L7-L48】 |
 | **Change Point / Nuevo enlace** (`sig_pair_change_point`, `sig_pair_new_edge`, `feat_pair_month_amount_ratio`) | Advierte cuando surge un par nuevo o cambia drásticamente su nivel de actividad. | Resume montos y conteos mensuales por par, los compara con el mes anterior y marca picos grandes o arranques que aparecen tras un buen tiempo sin relación.【F:coi_fraud/features/change_points.py†L10-L140】 |
 | **NLP corporativo** (`nlp_concepto_sospechoso`, `feat_nlp_risk_points`, `feat_nlp_coi_score`) | Clasifica descripciones para encontrar términos sospechosos en lenguaje cotidiano. | Ejecuta el modelo `nlp_mx_etiquetar_transacciones_pro` sobre la descripción y la relación declarada, devolviendo conceptos, puntajes de riesgo y detalles lingüísticos para cada transacción.【F:coi_fraud/features/nlp_mx.py†L7-L22】 |
 | **Desbalanceo por persona** (`desbalance_persona_monto_neto`, `desbalance_persona_meses_*`) | Resume quién envía mucho más de lo que recibe (o al revés) de manera sostenida. | Calcula el neto emitido vs. recibido, razones estadísticas y meses extremos para medir la magnitud y la constancia del desbalance.【F:coi_fraud/aggregate/persons.py†L491-L595】 |

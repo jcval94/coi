@@ -29,7 +29,7 @@ def tx_interpretation(r):
         msgs.append("Yo-Yo en ≤8h.")
         _add_part("yoyo", weights.get("yoyo", 0.0))
     if bool(r.get("sig_smurf", False)):
-        msgs.append("Smurfing (varios montos pequeños).")
+        msgs.append("Fraccionamiento (varios montos pequeños).")
         _add_part("smurf", weights.get("smurf", 0.0))
     if bool(r.get("sig_loan_bad_repay", False)):
         msgs.append("Préstamo con repago insuficiente.")
@@ -122,7 +122,7 @@ def tx_interpretation(r):
         "hier": "jerarquía",
         "nlp": "texto riesgoso",
         "yoyo": "yo-yo",
-        "smurf": "smurfing",
+        "smurf": "fraccionamiento",
         "loan": "préstamo irregular",
         "freq": "alta frecuencia",
         "recurrent": "recurrente",

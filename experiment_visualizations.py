@@ -690,7 +690,7 @@ def plot_q12_smurfing_chronic(
     ax: Optional[Axes] = None,
     top_n: int = 10,
 ) -> Axes:
-    """Grafica pares con patrones crónicos de smurfing."""
+    """Grafica pares con patrones crónicos de fraccionamiento."""
     data = question12_smurfing_chronic(reports, timeframe)
     axis = _ensure_axis(ax)
     if data.empty:
@@ -698,34 +698,27 @@ def plot_q12_smurfing_chronic(
             axis,
             "q12_smurfing_chronic",
             timeframe,
-            "Sin pares con smurfing prolongado.",
+            "Sin pares con fraccionamiento prolongado.",
         )
 
     work = data.copy()
     work["pair"] = work["pair"].fillna("sin_par").astype(str)
     work = work.sort_values(
-        ["meses_con_smurf", "monto_smurf_total"],
+        ["monto_fraccionado_total", "transacciones_fraccionadas"],
         ascending=[False, False],
     ).head(top_n)
     sns.scatterplot(
         data=work,
-        x="meses_con_smurf",
-        y="monto_smurf_total",
-        size="tx_smurf_totales",
-        hue="riesgo_max",
+        x="monto_fraccionado_total",
+        y="pair",
+        size="transacciones_fraccionadas",
+        hue="riesgo_maximo",
+        palette="viridis",
         ax=axis,
     )
-    for _, row in work.iterrows():
-        axis.text(
-            row["meses_con_smurf"],
-            row["monto_smurf_total"],
-            row["pair"],
-            fontsize=8,
-            ha="left",
-        )
     _apply_plot_metadata(axis, "q12_smurfing_chronic", timeframe)
-    axis.set_xlabel("Meses con smurfing")
-    axis.set_ylabel("Monto total smurf")
+    axis.set_xlabel("Monto total fraccionado")
+    axis.set_ylabel("Par emisor → receptor")
     axis.legend(title="Riesgo máximo", loc="best")
     return axis
 
