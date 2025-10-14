@@ -2,7 +2,7 @@
 def pair_interpretation(r):
     sigs=[]
     if r["pct_yoyo"]>0: sigs.append("yo-yo")
-    if r["pct_smurf"]>0: sigs.append("smurfing")
+    if r["pct_smurf"]>0: sigs.append("fraccionamiento")
     if r["pct_freq"]>0: sigs.append("alta frecuencia")
     if r.get("pct_recurrent",0)>0: sigs.append("recurrente")
     if r.get("pct_quid_pro_quo",0)>0: sigs.append("quid-pro-quo")

@@ -103,7 +103,7 @@ QUESTION_TITLES: Dict[str, str] = {
     "q9_case14_veterans_from_newcomers": "Q9 – Veteranos que reciben de emisores nuevos",
     "q10_yoyo_streaks": "Q10 – Rachas Yo-Yo prolongadas",
     "q11_near_threshold_structuring": "Q11 – Montos pegados a umbrales regulatorios",
-    "q12_smurfing_chronic": "Q12 – Smurfing crónico",
+    "q12_smurfing_chronic": "Q12 – Fraccionamiento crónico",
     "q13_bad_loans_with_frequency": "Q13 – Préstamos incumplidos con ráfagas de frecuencia",
     "q14_recurrent_payroll": "Q14 – Pagos recurrentes tipo nómina",
     "q15_coordinated_cluster_signals": "Q15 – Clusters con señales coordinadas",
@@ -2617,9 +2617,11 @@ def question11_near_threshold_structuring(
 
 
 def question12_smurfing_chronic(
-    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, min_months: int = 3
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    min_months: int | None = None,
 ) -> pd.DataFrame:
-    """Localiza pares con depósitos fragmentados de manera crónica (smurfing).
+    """Localiza pares con fraccionamiento crónico de montos.
 
     Parameters
     ----------
@@ -2628,21 +2630,23 @@ def question12_smurfing_chronic(
     timeframe
         Ventana temporal evaluada (``"todo_el_tiempo"`` por defecto).
     min_months
-        Cantidad mínima de meses con eventos smurf para priorizar el par.
+        Cantidad mínima de meses con eventos identificados. Si es ``None`` se
+        consideran todos los pares y se priorizan los montos globales.
 
     Metodología
     -----------
     1. Selecciona transacciones marcadas con ``sig_smurf`` o reconstruye la
        etiqueta usando cuantiles por par cuando no está disponible.
-    2. Agrega montos, riesgo promedio y máximo por mes, contando meses con
-       fragmentación recurrente.
-    3. Filtra por ``min_months`` y redacta interpretabilidad con el patrón
-       crónico observado, indicando si se relajaron criterios.
+    2. Agrega montos, riesgo promedio y máximo por mes para medir la
+       consistencia del fraccionamiento.
+    3. Prioriza los pares por el monto fraccionado total y redacta
+       interpretabilidad detallada, indicando si se relajaron criterios.
 
     Returns
     -------
     pandas.DataFrame
-        Tabla de pares con smurfing crónico y descripciones de su comportamiento.
+        Tabla de pares con fraccionamiento crónico y descripciones de su
+        comportamiento.
     """
     tx = _get_section(reports, "transaccion", timeframe)
     required = [
@@ -2658,11 +2662,11 @@ def question12_smurfing_chronic(
             columns=[
                 "timeframe",
                 "pair",
-                "meses_con_smurf",
-                "tx_smurf_totales",
-                "monto_smurf_total",
-                "riesgo_promedio_mes",
-                "riesgo_max",
+                "meses_con_fraccionamiento",
+                "transacciones_fraccionadas",
+                "monto_fraccionado_total",
+                "riesgo_promedio",
+                "riesgo_maximo",
                 "tendencia_riesgo",
                 "interpretabilidad",
             ]
@@ -2687,11 +2691,11 @@ def question12_smurfing_chronic(
                 columns=[
                     "timeframe",
                     "pair",
-                    "meses_con_smurf",
-                    "tx_smurf_totales",
-                    "monto_smurf_total",
-                    "riesgo_promedio_mes",
-                    "riesgo_max",
+                    "meses_con_fraccionamiento",
+                    "transacciones_fraccionadas",
+                    "monto_fraccionado_total",
+                    "riesgo_promedio",
+                    "riesgo_maximo",
                     "tendencia_riesgo",
                     "interpretabilidad",
                 ]
@@ -2723,8 +2727,8 @@ def question12_smurfing_chronic(
             direction = "a la baja"
         return pd.Series(
             {
-                "riesgo_promedio_mes": float(ordered["riesgo_prom_mes"].mean()) if not ordered.empty else 0.0,
-                "riesgo_max": float(ordered["riesgo_max_mes"].max()) if not ordered.empty else 0.0,
+                "riesgo_promedio": float(ordered["riesgo_prom_mes"].mean()) if not ordered.empty else 0.0,
+                "riesgo_maximo": float(ordered["riesgo_max_mes"].max()) if not ordered.empty else 0.0,
                 "tendencia_riesgo": direction,
                 "delta_riesgo": trend,
                 "riesgo_inicio": risk_start,
@@ -2735,23 +2739,28 @@ def question12_smurfing_chronic(
     base = (
         monthly.groupby("pair", observed=True)
         .agg(
-            meses_con_smurf=("month_id", "nunique"),
-            tx_smurf_totales=("tx_smurf_mes", "sum"),
-            monto_smurf_total=("monto_mes", "sum"),
+            meses_con_fraccionamiento=("month_id", "nunique"),
+            transacciones_fraccionadas=("tx_smurf_mes", "sum"),
+            monto_fraccionado_total=("monto_mes", "sum"),
         )
         .reset_index()
     )
     risk = monthly.groupby("pair", observed=True).apply(_risk_trend).reset_index()
     merged = base.merge(risk, on="pair", how="left")
-    filtered = merged[merged["meses_con_smurf"] >= int(min_months)].copy()
-    relaxed_months = False
-    if filtered.empty:
-        relaxed_months = True
-        fallback_min = max(int(min_months) - 1, 1)
-        filtered = merged[merged["meses_con_smurf"] >= fallback_min].copy()
+    filtered = merged.copy()
+    applied_month_filter = False
+    if min_months:
+        applied_month_filter = True
+        filtered = filtered[
+            filtered["meses_con_fraccionamiento"] >= int(min_months)
+        ].copy()
     if filtered.empty:
         filtered = merged.sort_values(
-            ["meses_con_smurf", "monto_smurf_total", "tx_smurf_totales"],
+            [
+                "monto_fraccionado_total",
+                "transacciones_fraccionadas",
+                "meses_con_fraccionamiento",
+            ],
             ascending=[False, False, False],
         ).head(25)
     if filtered.empty:
@@ -2759,11 +2768,11 @@ def question12_smurfing_chronic(
             columns=[
                 "timeframe",
                 "pair",
-                "meses_con_smurf",
-                "tx_smurf_totales",
-                "monto_smurf_total",
-                "riesgo_promedio_mes",
-                "riesgo_max",
+                "meses_con_fraccionamiento",
+                "transacciones_fraccionadas",
+                "monto_fraccionado_total",
+                "riesgo_promedio",
+                "riesgo_maximo",
                 "tendencia_riesgo",
                 "interpretabilidad",
             ]
@@ -2771,22 +2780,26 @@ def question12_smurfing_chronic(
 
     filtered["timeframe"] = timeframe
     filtered = filtered.sort_values(
-        ["meses_con_smurf", "monto_smurf_total"], ascending=[False, False]
+        ["monto_fraccionado_total", "transacciones_fraccionadas"],
+        ascending=[False, False],
     )
     filtered["interpretabilidad"] = filtered.apply(
         lambda row: (
-            f"En '{timeframe}', el par {row.get('pair', 'sin_par')} mostró fraccionamiento (smurfing) en "
-            f"{int(row.get('meses_con_smurf', 0))} meses, acumulando {_format_float(row.get('monto_smurf_total', 0))} "
-            f"en {int(row.get('tx_smurf_totales', 0))} transacciones. El riesgo promedio mensual fue "
-            f"{row.get('riesgo_promedio_mes', 0.0):.2f}, con pico de {row.get('riesgo_max', 0.0):.2f} y tendencia "
+            f"En '{timeframe}', el par {row.get('pair', 'sin_par')} registró fraccionamiento en "
+            f"{int(row.get('transacciones_fraccionadas', 0))} transacciones, acumulando "
+            f"{_format_float(row.get('monto_fraccionado_total', 0))} y distribuyéndolo en "
+            f"{int(row.get('meses_con_fraccionamiento', 0))} meses. El riesgo promedio fue "
+            f"{row.get('riesgo_promedio', 0.0):.2f}, con pico de {row.get('riesgo_maximo', 0.0):.2f} y tendencia "
             f"{row.get('tendencia_riesgo', 'estable')} (inicio {row.get('riesgo_inicio', 0.0):.2f} → fin {row.get('riesgo_fin', 0.0):.2f})."
             + (
                 " Se utilizó una heurística de montos pequeños repetidos ante la ausencia de alertas explícitas."
-                if relaxed_flags and row.get("tx_smurf_totales", 0) > 0
+                if relaxed_flags and row.get("transacciones_fraccionadas", 0) > 0
                 else ""
             )
             + (
-                " Se relajó la cantidad mínima de meses para exponer un patrón persistente." if relaxed_months and row.get("meses_con_smurf", 0) < int(min_months) else ""
+                " Se priorizó el total fraccionado por encima de la distribución mensual."
+                if not applied_month_filter
+                else ""
             )
         ),
         axis=1,
@@ -2794,11 +2807,11 @@ def question12_smurfing_chronic(
     columns = [
         "timeframe",
         "pair",
-        "meses_con_smurf",
-        "tx_smurf_totales",
-        "monto_smurf_total",
-        "riesgo_promedio_mes",
-        "riesgo_max",
+        "meses_con_fraccionamiento",
+        "transacciones_fraccionadas",
+        "monto_fraccionado_total",
+        "riesgo_promedio",
+        "riesgo_maximo",
         "tendencia_riesgo",
         "interpretabilidad",
     ]
@@ -3302,7 +3315,7 @@ def question15_coordinated_cluster_signals(
     -----------
     1. Forma clusters como componentes conexas del grafo de transacciones,
        uniendo personas enlazadas por pagos directos o a través de terceros.
-    2. Extrae indicadores de señales (yo-yo, smurfing, ciclos, quid y
+    2. Extrae indicadores de señales (yo-yo, fraccionamiento, ciclos, quid y
        referencia reutilizada) junto con métricas de tamaño, montos y riesgo.
     3. Calcula cuántas señales activas tiene cada cluster y normaliza montos y
        conteos para ordenar la prioridad.
@@ -3319,7 +3332,7 @@ def question15_coordinated_cluster_signals(
     clusters = _get_section(reports, "clusters_personas", timeframe)
     signal_cols = {
         "yo_yo_cluster_tasa_flag": "yo-yo",
-        "smurf_cluster_tasa_flag": "smurf",
+        "smurf_cluster_tasa_flag": "fraccionamiento",
         "red_cluster_tasa_en_ciclos": "ciclos",
         "quid_cluster_tasa_flag": "quid",
         "referencia_cluster_tasa_reutilizada": "referencia reutilizada",
@@ -3476,7 +3489,7 @@ def question16_multisignal_transactions(
 
     Metodología
     -----------
-    1. Consolida banderas de jerarquía, yo-yo, smurf, near-threshold, quid y
+    1. Consolida banderas de jerarquía, yo-yo, fraccionamiento, near-threshold, quid y
        cambios bruscos por transacción.
     2. Cuenta cuántas señales están activas por registro y ordena por número de
        señales, riesgo y monto.
@@ -3494,7 +3507,7 @@ def question16_multisignal_transactions(
     signal_cols = {
         "flag_jerarquia": "jerarquía",
         "sig_yoyo": "yo-yo",
-        "sig_smurf": "smurf",
+        "sig_smurf": "fraccionamiento",
         "sig_near_thr": "near-threshold",
         "sig_quid_pro_quo": "quid",
         "sig_pair_change_point": "cambio brusco",
@@ -4069,7 +4082,7 @@ def question18_user_risk_scores(
 
     flag_rate_cols = {
         "yo_yo_persona_tasa_flag_emisor": "yo-yo",
-        "smurf_persona_tasa_flag_emisor": "smurf",
+        "smurf_persona_tasa_flag_emisor": "fraccionamiento",
         "frecuencia_persona_tasa_flag_emisor": "frecuencia inusual",
         "recurrente_persona_tasa_flag_emisor": "recurrente",
         "prestamo_persona_tasa_repay_insuficiente": "préstamo impago",
