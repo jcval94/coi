@@ -509,33 +509,135 @@ def _filter_manager_subordinate(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.iloc[0:0].copy()
 
-    if COL_RELATION in df:
-        mask = df[COL_RELATION].fillna("").astype(str).str.contains(
-            "manager", case=False
-        )
-        return df.loc[mask].copy()
+    work = df
+    if COL_RELATION in work:
+        relation = work[COL_RELATION].fillna("").astype(str)
+        mask = relation.str.contains("manager", case=False)
+        if mask.any():
+            return work.loc[mask].copy()
+        # Si la columna existe pero no provee información útil, se ignora para
+        # intentar inferir la relación a partir de las columnas de managers.
+        work = work.drop(columns=[COL_RELATION])
 
     required = {COL_SENDER_ID, COL_RECEIVER_ID}
-    if not required.issubset(df.columns):
+    if not required.issubset(work.columns):
         return df.iloc[0:0].copy()
 
-    manager_cols = [col for col in MANAGER_ID_COLUMNS if col in df.columns]
-    if not manager_cols:
+    work = work.copy()
+
+    def _normalize_single(value: Any) -> str | None:
+        if value is None:
+            return None
+        if value is pd.NA:
+            return None
+        if isinstance(value, float):
+            if pd.isna(value):
+                return None
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return None
+        return text
+
+    def _value_to_id_set(value: Any) -> set[str]:
+        if value is None or value is pd.NA:
+            return set()
+        if isinstance(value, float) and pd.isna(value):
+            return set()
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return {
+                item
+                for item in (
+                    _normalize_single(element)
+                    for element in value
+                    if not isinstance(element, (list, tuple, set, frozenset))
+                )
+                if item is not None
+            }
+        text = _normalize_single(value)
+        if text is None:
+            return set()
+        tokens = re.split(r"[\s,;|/]+", text)
+        return {token.strip() for token in tokens if token and token.strip()}
+
+    def _collect_prefixed_columns(
+        base_names: Iterable[str], prefixes: Iterable[str]
+    ) -> list[str]:
+        columns: list[str] = []
+        for prefix in prefixes:
+            for base in base_names:
+                name = f"{prefix}{base}" if prefix else base
+                if name in work.columns:
+                    columns.append(name)
+        return columns
+
+    manager_cols_sender = _collect_prefixed_columns(MANAGER_ID_COLUMNS, ("", "envio-"))
+    manager_cols_receiver = _collect_prefixed_columns(MANAGER_ID_COLUMNS, ("receptor-",))
+    teammate_cols_sender = _collect_prefixed_columns(("companeros_de_equipo",), ("", "envio-"))
+    teammate_cols_receiver = _collect_prefixed_columns(("companeros_de_equipo",), ("receptor-",))
+
+    if not manager_cols_sender and not manager_cols_receiver:
         return df.iloc[0:0].copy()
 
-    work = df.copy()
+    sender_ids = work[COL_SENDER_ID].map(_normalize_single)
+    receiver_ids = work[COL_RECEIVER_ID].map(_normalize_single)
 
-    def _normalize(series: pd.Series) -> pd.Series:
-        return series.astype("string").fillna("").str.strip()
+    def _identifier_in_columns(
+        row: pd.Series, identifier: str | None, columns: Iterable[str]
+    ) -> bool:
+        if identifier is None:
+            return False
+        for column in columns:
+            if identifier in _value_to_id_set(row.get(column)):
+                return True
+        return False
 
-    sender = _normalize(work[COL_SENDER_ID])
-    receiver = _normalize(work[COL_RECEIVER_ID])
-    manager_matrix = pd.DataFrame(
-        {col: _normalize(work[col]) for col in manager_cols}, index=work.index
+    def _teammate_match(
+        row: pd.Series, identifier: str | None, columns: Iterable[str]
+    ) -> bool:
+        if identifier is None:
+            return False
+        for column in columns:
+            values = _value_to_id_set(row.get(column))
+            if identifier in values:
+                return True
+        return False
+
+    receiver_is_sender_manager = work.apply(
+        lambda row: _identifier_in_columns(
+            row, receiver_ids.get(row.name), manager_cols_sender
+        ),
+        axis=1,
     )
 
-    manager_is_sender = manager_matrix.eq(sender, axis=0).any(axis=1)
-    manager_is_receiver = manager_matrix.eq(receiver, axis=0).any(axis=1)
+    sender_is_receiver_manager = work.apply(
+        lambda row: _identifier_in_columns(
+            row, sender_ids.get(row.name), manager_cols_receiver
+        ),
+        axis=1,
+    )
+
+    if teammate_cols_sender:
+        receiver_is_teammate = work.apply(
+            lambda row: _teammate_match(
+                row, receiver_ids.get(row.name), teammate_cols_sender
+            ),
+            axis=1,
+        )
+    else:
+        receiver_is_teammate = pd.Series(False, index=work.index)
+
+    if teammate_cols_receiver:
+        sender_is_teammate = work.apply(
+            lambda row: _teammate_match(
+                row, sender_ids.get(row.name), teammate_cols_receiver
+            ),
+            axis=1,
+        )
+    else:
+        sender_is_teammate = pd.Series(False, index=work.index)
+
+    manager_is_receiver = receiver_is_sender_manager & ~receiver_is_teammate
+    manager_is_sender = sender_is_receiver_manager & ~sender_is_teammate
 
     inferred_relation = pd.Series(pd.NA, index=work.index, dtype="string")
     inferred_relation.loc[manager_is_sender] = "manager_del_receptor"

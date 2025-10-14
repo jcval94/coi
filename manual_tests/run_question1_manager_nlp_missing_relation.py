@@ -25,7 +25,8 @@ def build_reports_without_relation() -> dict[str, dict[str, pd.DataFrame]]:
             COL_RECEIVER_ID: "EMP-301",
             COL_AMOUNT: 2_100.0,
             COL_DESCRIPTION: "Soborno especial acordado con subordinado",
-            "manager_1_user_id": "MGR-500",
+            "receptor-manager_1_user_id": "MGR-500",
+            "receptor-companeros_de_equipo": "EMP-310|EMP-311",
         },
         {
             "month_id": "2024-04",
@@ -33,7 +34,8 @@ def build_reports_without_relation() -> dict[str, dict[str, pd.DataFrame]]:
             COL_RECEIVER_ID: "EMP-302",
             COL_AMOUNT: 950.0,
             COL_DESCRIPTION: "Pago de facilitación para mover contrato",
-            "manager_1_user_id": "MGR-500",
+            "receptor-manager_1_user_id": "MGR-500",
+            "receptor-companeros_de_equipo": "EMP-312;EMP-313",
         },
     ]
     df = pd.DataFrame(data)
