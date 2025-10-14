@@ -226,22 +226,41 @@ def _combine_unique_texts(values: Iterable[Any]) -> str:
     seen: set[str] = set()
     ordered: list[str] = []
     for value in values:
-        if value is None:
+        if _is_blank_value(value):
             continue
         text = str(value).strip()
-        if not text or text.lower() == "nan":
-            continue
         if text not in seen:
             seen.add(text)
             ordered.append(text)
     return "; ".join(ordered)
 
 
+def _is_blank_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if value is pd.NA:
+        return True
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        result = False
+    else:
+        try:
+            if bool(result):
+                return True
+        except (TypeError, ValueError):
+            pass
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return True
+    return False
+
+
 def _combine_unique_categories(values: Iterable[Any]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for value in values:
-        if value in (None, "", pd.NA):
+        if _is_blank_value(value):
             continue
         text = str(value).strip()
         if not text or text.lower() == "nan":
@@ -255,7 +274,7 @@ def _combine_unique_categories(values: Iterable[Any]) -> list[str]:
 def _max_text_length(values: Iterable[Any]) -> int:
     lengths = []
     for value in values:
-        if value in (None, "", pd.NA):
+        if _is_blank_value(value):
             continue
         text = str(value).strip()
         if not text or text.lower() == "nan":
@@ -269,7 +288,7 @@ def _most_common_text(values: Iterable[Any]) -> str:
     top_text = ""
     top_count = 0
     for value in values:
-        if value in (None, "", pd.NA):
+        if _is_blank_value(value):
             continue
         text = str(value).strip()
         if not text or text.lower() == "nan":
@@ -453,7 +472,10 @@ def question1_manager_nlp(
     direction
         Orientación del flujo de pagos a priorizar. Acepta ``"manager_a_subordinado"``
         (por defecto) para pagos enviados por managers y ``"subordinado_a_manager"``
-        para el sentido inverso.
+        para el sentido inverso. Cuando la columna :data:`~coi_fraud.schemas.COL_RELATION`
+        indica explícitamente que el manager es el emisor o el receptor, la función
+        utilizará esa pista para determinar el sentido real del flujo antes de aplicar
+        el filtro.
 
     Metodología
     -----------
@@ -518,19 +540,83 @@ def question1_manager_nlp(
             ]
         )
 
-    if direction == "manager_a_subordinado":
-        manager_source = COL_SENDER_ID
-        subordinate_source = COL_RECEIVER_ID
-    else:
-        manager_source = COL_RECEIVER_ID
-        subordinate_source = COL_SENDER_ID
+    hits = hits.copy()
 
-    hits["manager_user_id"] = (
-        hits[manager_source].fillna("").astype(str).replace({"": pd.NA})
-    )
-    hits["subordinado_user_id"] = (
-        hits[subordinate_source].fillna("").astype(str).replace({"": pd.NA})
-    )
+    def _normalize_identifier(series: pd.Series) -> pd.Series:
+        normalized = series.astype("string").fillna("")
+        normalized = normalized.str.strip()
+        normalized = normalized.replace({"": pd.NA})
+        # Devuelve objetos estándar en lugar de ``pd.NA`` para evitar ambigüedad al
+        # evaluar los valores en funciones auxiliares.
+        return normalized.mask(normalized.isna(), None)
+
+    if COL_RELATION in hits.columns:
+        relation = hits[COL_RELATION].fillna("").astype(str).str.lower()
+        manager_ids = hits[COL_RECEIVER_ID].astype("string")
+        subordinate_ids = hits[COL_SENDER_ID].astype("string")
+
+        manager_is_sender = relation.str.contains("manager_del_receptor")
+        manager_ids.loc[manager_is_sender] = hits.loc[
+            manager_is_sender, COL_SENDER_ID
+        ].astype("string")
+        subordinate_ids.loc[manager_is_sender] = hits.loc[
+            manager_is_sender, COL_RECEIVER_ID
+        ].astype("string")
+
+        manager_is_receiver = relation.str.contains("manager_del_emisor")
+
+        unknown_orientation = ~(manager_is_sender | manager_is_receiver)
+        if unknown_orientation.any():
+            if direction == "manager_a_subordinado":
+                manager_ids.loc[unknown_orientation] = hits.loc[
+                    unknown_orientation, COL_SENDER_ID
+                ].astype("string")
+                subordinate_ids.loc[unknown_orientation] = hits.loc[
+                    unknown_orientation, COL_RECEIVER_ID
+                ].astype("string")
+            else:
+                manager_ids.loc[unknown_orientation] = hits.loc[
+                    unknown_orientation, COL_RECEIVER_ID
+                ].astype("string")
+                subordinate_ids.loc[unknown_orientation] = hits.loc[
+                    unknown_orientation, COL_SENDER_ID
+                ].astype("string")
+
+        actual_direction = pd.Series(
+            "subordinado_a_manager", index=hits.index, dtype="string"
+        )
+        actual_direction.loc[manager_is_sender] = "manager_a_subordinado"
+        actual_direction.loc[unknown_orientation] = direction
+
+        hits = hits.loc[actual_direction == direction].copy()
+        if hits.empty:
+            return pd.DataFrame(
+                columns=[
+                    "timeframe",
+                    "month_id",
+                    "manager_user_id",
+                    "subordinado_user_id",
+                    "nlp_concepto_sospechoso",
+                    "nlp_concepto_crudo",
+                    "nlp_descripciones",
+                    "tx_count",
+                    "monto_total",
+                    "interpretabilidad",
+                ]
+            )
+
+        manager_ids = manager_ids.loc[hits.index]
+        subordinate_ids = subordinate_ids.loc[hits.index]
+    else:
+        if direction == "manager_a_subordinado":
+            manager_ids = hits[COL_SENDER_ID].astype("string")
+            subordinate_ids = hits[COL_RECEIVER_ID].astype("string")
+        else:
+            manager_ids = hits[COL_RECEIVER_ID].astype("string")
+            subordinate_ids = hits[COL_SENDER_ID].astype("string")
+
+    hits["manager_user_id"] = _normalize_identifier(manager_ids)
+    hits["subordinado_user_id"] = _normalize_identifier(subordinate_ids)
     hits = hits.dropna(subset=["manager_user_id", "subordinado_user_id"])
     if hits.empty:
         return pd.DataFrame(
