@@ -365,22 +365,47 @@ def plot_q6_centralizers(
         )
 
     work = data.copy()
-    work = work.sort_values(["centralidad", "inflow"], ascending=[False, False]).head(top_n)
+    if "month_id" not in work.columns:
+        return _render_empty_chart(
+            axis,
+            "q6_centralizers",
+            timeframe,
+            "Sin información temporal para graficar centralidad.",
+        )
+
+    top_receivers = (
+        work.groupby(COL_RECEIVER_ID, observed=True)["centralidad"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(top_n)
+        .index
+    )
+    work = work.loc[work[COL_RECEIVER_ID].isin(top_receivers)].copy()
+    if work.empty:
+        return _render_empty_chart(
+            axis,
+            "q6_centralizers",
+            timeframe,
+            "Sin receptores centralizadores suficientes para graficar.",
+        )
+
     work[COL_RECEIVER_ID] = work[COL_RECEIVER_ID].fillna("sin_receptor").astype(str)
-    plot_kwargs = {
-        "data": work,
-        "x": "centralidad",
-        "y": COL_RECEIVER_ID,
-        "ax": axis,
-    }
-    if "month_id" in work:
-        plot_kwargs["hue"] = "month_id"
-    sns.barplot(**plot_kwargs)
+    work = work.sort_values(["month_id", COL_RECEIVER_ID])
+    sns.lineplot(
+        data=work,
+        x="month_id",
+        y="centralidad",
+        hue=COL_RECEIVER_ID,
+        style=COL_RECEIVER_ID,
+        markers=True,
+        dashes=False,
+        ax=axis,
+    )
     if axis.get_legend() is not None:
-        axis.legend(title="Mes")
+        axis.legend(title="Receptor")
     _apply_plot_metadata(axis, "q6_centralizers", timeframe)
-    axis.set_xlabel("Centralidad (inflow × emisores únicos)")
-    axis.set_ylabel("Receptor")
+    axis.set_xlabel("Mes")
+    axis.set_ylabel("Centralidad (inflow × emisores únicos)")
     return axis
 
 

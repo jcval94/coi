@@ -1353,16 +1353,24 @@ def question6_centralizers(
                 "timeframe",
                 "month_id",
                 COL_RECEIVER_ID,
+                "emisores_lista",
                 "inflow",
                 "emisores_unicos",
                 "n_tx",
                 "risk_avg",
                 "centralidad",
+                "monto_total_acumulado",
+                "apariciones_receptor",
                 "interpretabilidad",
             ]
         )
 
     work = tx[["month_id", COL_SENDER_ID, COL_RECEIVER_ID, COL_AMOUNT, "risk_score"]].copy()
+    emisores_detalle = (
+        work.groupby(["month_id", COL_RECEIVER_ID], observed=True)[COL_SENDER_ID]
+        .apply(lambda values: sorted(pd.unique(values)))
+        .reset_index(name="emisores_lista")
+    )
     agg = (
         work.groupby(["month_id", COL_RECEIVER_ID], observed=True)
         .agg(
@@ -1373,8 +1381,27 @@ def question6_centralizers(
         )
         .reset_index()
     )
+    agg = agg.merge(emisores_detalle, on=["month_id", COL_RECEIVER_ID], how="left")
+
+    def _format_emitter_list(items: Any) -> str:
+        if isinstance(items, (list, tuple)):
+            return ", ".join(map(str, items))
+        if pd.isna(items):
+            return ""
+        return str(items)
+
+    agg["emisores_lista"] = agg["emisores_lista"].apply(_format_emitter_list)
     agg["centralidad"] = agg["inflow"] * agg["emisores_unicos"]
     agg = agg.sort_values(["month_id", "centralidad"], ascending=[True, False])
+    acumulados = (
+        agg.groupby(COL_RECEIVER_ID, observed=True)
+        .agg(
+            monto_total_acumulado=("inflow", "sum"),
+            apariciones_receptor=("month_id", "count"),
+        )
+        .reset_index()
+    )
+    agg = agg.merge(acumulados, on=COL_RECEIVER_ID, how="left")
     agg["timeframe"] = timeframe
     agg["interpretabilidad"] = agg.apply(
         lambda row: (
@@ -1382,7 +1409,9 @@ def question6_centralizers(
             f"{_coalesce_str(row.get(COL_RECEIVER_ID), default='sin_receptor')} "
             f"recibió {_format_float(row.get('inflow', 0))} de {int(row.get('emisores_unicos', 0))} emisores únicos "
             f"a través de {int(row.get('n_tx', 0))} pagos, logrando centralidad {row.get('centralidad', 0):.2f} "
-            f"y riesgo promedio {row.get('risk_avg', 0):.2f}."
+            f"y riesgo promedio {row.get('risk_avg', 0):.2f}. "
+            f"En total acumuló {_format_float(row.get('monto_total_acumulado', 0))} en {int(row.get('apariciones_receptor', 0))} apariciones. "
+            f"Emisores: {row.get('emisores_lista') or 'sin_emisores'}."
         ),
         axis=1,
     )
@@ -1390,11 +1419,14 @@ def question6_centralizers(
         "timeframe",
         "month_id",
         COL_RECEIVER_ID,
+        "emisores_lista",
         "inflow",
         "emisores_unicos",
         "n_tx",
         "risk_avg",
         "centralidad",
+        "monto_total_acumulado",
+        "apariciones_receptor",
         "interpretabilidad",
     ]
     return agg.reindex(columns=columns)
