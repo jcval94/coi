@@ -546,7 +546,7 @@ def plot_q10_yoyo_streaks(
 ) -> Axes:
     """Grafica pares con mayores rachas Yo-Yo y riesgo."""
     data = question10_yoyo_streaks(reports, timeframe)
-    axis = _ensure_axis(ax)
+    axis = _ensure_axis(ax, figsize=(10, max(5, int(top_n * 0.7))))
     if data.empty:
         return _render_empty_chart(
             axis,
@@ -561,26 +561,87 @@ def plot_q10_yoyo_streaks(
         ["racha_max_yo_yo", "riesgo_max_par", "tx_yo_yo_totales"],
         ascending=[False, False, False],
     ).head(top_n)
+    ordered_pairs = work["par_bidir"].tolist()
+    work["par_bidir"] = pd.Categorical(work["par_bidir"], categories=ordered_pairs, ordered=True)
+
+    palette = sns.color_palette("rocket", as_cmap=True)
     sns.scatterplot(
         data=work,
         x="racha_max_yo_yo",
-        y="riesgo_max_par",
+        y="par_bidir",
+        hue="riesgo_max_par",
         size="tx_yo_yo_totales",
-        hue="meses_con_yo_yo",
+        palette=palette,
+        sizes=(70, 600),
+        linewidth=0.6,
+        edgecolor="#333333",
+        legend=False,
         ax=axis,
     )
-    for _, row in work.iterrows():
-        axis.text(
-            row["racha_max_yo_yo"],
-            row["riesgo_max_par"],
-            row["par_bidir"],
-            fontsize=8,
-            ha="left",
+
+    riesgo_min = float(work["riesgo_max_par"].min())
+    riesgo_max = float(work["riesgo_max_par"].max())
+    if np.isclose(riesgo_min, riesgo_max):
+        riesgo_max = riesgo_min + 1.0
+    risk_norm = colors.Normalize(vmin=riesgo_min, vmax=riesgo_max)
+    colorbar = axis.figure.colorbar(
+        plt.cm.ScalarMappable(norm=risk_norm, cmap=palette),
+        ax=axis,
+        pad=0.01,
+    )
+    colorbar.set_label("Riesgo máximo del par")
+
+    size_min = float(work["tx_yo_yo_totales"].min())
+    size_max = float(work["tx_yo_yo_totales"].max())
+    size_range = (70.0, 600.0)
+
+    def _scale_size(value: float) -> float:
+        if size_min == size_max:
+            return float(np.mean(size_range))
+        return float(np.interp(value, (size_min, size_max), size_range))
+
+    size_ticks = np.linspace(size_min, size_max, num=min(4, len(work)))
+    size_handles = [
+        plt.scatter([], [], s=_scale_size(val), color="#555555", alpha=0.6)
+        for val in size_ticks
+    ]
+    size_labels = [f"{int(round(val))} tx" for val in size_ticks]
+    if size_handles:
+        size_legend = axis.legend(
+            size_handles,
+            size_labels,
+            title="Transacciones Yo-Yo",
+            loc="lower right",
+            frameon=True,
         )
+        axis.add_artist(size_legend)
+
+    racha_min = float(work["racha_max_yo_yo"].min())
+    racha_max = float(work["racha_max_yo_yo"].max())
+    x_offset = max((racha_max - racha_min) * 0.05, 0.5)
+    for _, row in work.iterrows():
+        meses = row.get("meses_con_yo_yo")
+        if pd.isna(meses):
+            label = "sin meses"
+        else:
+            meses_int = int(meses)
+            label = f"{meses_int} mes" if meses_int == 1 else f"{meses_int} meses"
+        axis.text(
+            row["racha_max_yo_yo"] + x_offset,
+            row["par_bidir"],
+            label,
+            va="center",
+            ha="left",
+            fontsize=8,
+            color="#333333",
+        )
+
+    axis.set_xlim(left=0)
+    axis.margins(x=0.05)
+    axis.grid(axis="x", which="major", linestyle="--", alpha=0.3)
     _apply_plot_metadata(axis, "q10_yoyo_streaks", timeframe)
     axis.set_xlabel("Racha máxima Yo-Yo")
-    axis.set_ylabel("Riesgo máximo del par")
-    axis.legend(title="Meses Yo-Yo", loc="best")
+    axis.set_ylabel("Par bidireccional")
     return axis
 
 
