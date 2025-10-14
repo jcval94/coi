@@ -295,13 +295,28 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
 - **Q8 – Receptores nuevos con montos altos** (`question8_case13_new_employees`):
   - **¿Qué detecta?** Personas recién incorporadas que, en sus primeros meses, reciben montos muy altos.
   - **¿Cómo lo hace?** Usa la bandera `caso13_persona_flag_nuevo_receptor_altos_montos`, se queda con quienes están en el percentil 90 de montos dentro de los primeros seis meses y resume totales, emisores únicos y promedios.
-  - **Parámetros clave:** `timeframe`.
+  - **Parámetros clave:** `timeframe`, `new_definition` (por defecto `("months", 6.0)` equivalente al umbral original de 0.5 años).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question8_case13_new_employees
 
     q8 = question8_case13_new_employees(reports, timeframe="todo_el_tiempo")
     print(q8.head())
+    ```
+  - **Cómo ajustar el criterio de antigüedad:**
+    ```python
+    # Considera nuevos a quienes lleven ≤3 meses en la organización
+    q8_ajustado = question8_case13_new_employees(
+        reports,
+        timeframe="todo_el_tiempo",
+        new_definition=("months", 3.0),
+    )
+
+    # O calcula el umbral según el percentil 25 de antigüedad disponible
+    q8_percentil = question8_case13_new_employees(
+        reports,
+        new_definition=("percentile", 0.25),
+    )
     ```
   - **Visualización rápida:**
     ```python
@@ -317,13 +332,22 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
 - **Q9 – Veteranos que reciben de emisores nuevos** (`question9_case14_veterans_from_newcomers`):
   - **¿Qué detecta?** Personas con mucha antigüedad que empiezan a recibir dinero de emisores recién llegados.
   - **¿Cómo lo hace?** Busca la bandera `caso14_persona_flag_antiguo_recibe_de_nuevos` y, si no existe, reconstruye el cálculo a partir de las transacciones para estimar antigüedad y montos recibidos. Luego resume emisores únicos y promedios para dimensionar la relación.
-  - **Parámetros clave:** `timeframe`.
+  - **Parámetros clave:** `timeframe`, `newcomer_definition` (por defecto `("months", 6.0)`) y `veteran_definition` (por defecto `("months", 60.0)` que conserva el umbral de 5 años).
   - **Ejemplo de uso:**
     ```python
     from experiment_questions import question9_case14_veterans_from_newcomers
 
     q9 = question9_case14_veterans_from_newcomers(reports, timeframe="todo_el_tiempo")
     print(q9.head())
+    ```
+  - **Cómo ajustar los umbrales:**
+    ```python
+    q9_personalizado = question9_case14_veterans_from_newcomers(
+        reports,
+        timeframe="todo_el_tiempo",
+        newcomer_definition=("months", 4.0),  # emisores con ≤4 meses
+        veteran_definition=("percentile", 0.8),  # imprime la conversión a meses
+    )
     ```
   - **Visualización rápida:**
     ```python

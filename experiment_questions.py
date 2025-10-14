@@ -6,7 +6,7 @@ import inspect
 import re
 from pathlib import Path
 from textwrap import fill
-from typing import Any, Callable, Dict, Iterable, Mapping, Literal
+from typing import Any, Callable, Dict, Iterable, Mapping, Literal, Tuple
 
 try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import pandas as pd
@@ -27,7 +27,9 @@ from coi_fraud.schemas import (
     COL_SENDER_TENURE_YEARS,
 )
 from coi_fraud.aggregate.persons import (
+    CASE13_NEW_EMPLOYEE_YEARS,
     CASE14_NEW_EMPLOYEE_YEARS,
+    CASE14_OLD_EMPLOYEE_YEARS,
 )
 from coi_fraud.text_utils import (
     clean_raw_concept,
@@ -111,6 +113,10 @@ QUESTION_TITLES: Dict[str, str] = {
 }
 
 
+TenureUnit = Literal["months", "percentile"]
+TenureDefinition = Tuple[TenureUnit, float]
+
+
 def _format_float(value: Any) -> str:
     try:
         return f"{float(value):,.2f}"
@@ -128,6 +134,73 @@ def _coalesce_str(*values: Any, default: str = "sin_valor") -> str:
         if text and text.lower() != "nan":
             return text
     return default
+
+
+def _resolve_tenure_months(
+    tx: pd.DataFrame,
+    column_years: str,
+    definition: TenureDefinition | None,
+    *,
+    default_months: float,
+    context: str,
+) -> float:
+    """Resuelve un umbral de antigüedad expresado en meses."""
+
+    if definition is None:
+        return default_months
+
+    unit, raw_value = definition
+    unit = unit.lower()
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        value = float("nan")
+
+    if unit == "months":
+        return value if not pd.isna(value) else default_months
+
+    if unit == "percentile":
+        if pd.isna(value) or value < 0 or value > 1:
+            print(
+                f"[{context}] Percentil inválido {raw_value!r}; se usa {default_months:.2f} meses"
+            )
+            return default_months
+        if tx is None or tx.empty or column_years not in tx:
+            print(
+                f"[{context}] No hay datos para convertir percentil; se usa {default_months:.2f} meses"
+            )
+            return default_months
+        series = pd.to_numeric(tx[column_years], errors="coerce").dropna()
+        if series.empty:
+            print(
+                f"[{context}] No hay valores numéricos para convertir percentil; se usa {default_months:.2f} meses"
+            )
+            return default_months
+        quantile_years = float(series.quantile(value))
+        months = quantile_years * 12.0
+        print(
+            f"[{context}] Percentil {value:.2%} equivale a {months:.2f} meses"
+        )
+        return months
+
+    print(
+        f"[{context}] Unidad '{unit}' no reconocida; se usa {default_months:.2f} meses"
+    )
+    return default_months
+
+
+def _format_months_threshold(months: float) -> str:
+    """Devuelve una cadena amigable para un umbral en meses."""
+
+    try:
+        value = float(months)
+    except (TypeError, ValueError):
+        return "N/D meses"
+    if pd.isna(value):
+        return "N/D meses"
+    if abs(value - round(value)) < 1e-6:
+        return f"{int(round(value))} meses"
+    return f"{value:.1f} meses"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1549,7 +1622,9 @@ def question7_net_imbalance(
 
 
 def question8_case13_new_employees(
-    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    new_definition: TenureDefinition = ("months", CASE13_NEW_EMPLOYEE_YEARS * 12.0),
 ) -> pd.DataFrame:
     """Detecta receptores recién incorporados que reciben montos altos.
 
@@ -1560,6 +1635,13 @@ def question8_case13_new_employees(
         caso 13.
     timeframe
         Ventana temporal analizada (valor por defecto ``"todo_el_tiempo"``).
+    new_definition
+        Parámetro que define qué se considera receptor nuevo. Puede ser una
+        tupla ``("months", valor)`` para fijar el umbral en meses o
+        ``("percentile", valor)`` para estimarlo a partir de los percentiles de
+        antigüedad (0–1). Cuando se usan percentiles se imprime la conversión a
+        meses. Por defecto se mantiene el criterio original del caso, es decir,
+        ``("months", 6.0)`` (equivalente a 0.5 años).
 
     Metodología
     -----------
@@ -1601,9 +1683,47 @@ def question8_case13_new_employees(
             ]
         )
 
+    tx = _get_section(reports, "transaccion", timeframe)
+    new_months_threshold = _resolve_tenure_months(
+        tx,
+        "receptor_antiguedad_anios",
+        new_definition,
+        default_months=CASE13_NEW_EMPLOYEE_YEARS * 12.0,
+        context="question8_case13_new_employees",
+    )
+    if pd.isna(new_months_threshold):
+        new_months_threshold = CASE13_NEW_EMPLOYEE_YEARS * 12.0
+
     work = personas[required].copy()
     mask = work["caso13_persona_flag_nuevo_receptor_altos_montos"].fillna(0).astype(int) > 0
     work = work.loc[mask].copy()
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso13_persona_tx_recibidas",
+                "caso13_persona_monto_total",
+                "caso13_persona_emisores_unicos",
+                "caso13_persona_tx_altos",
+                "caso13_persona_monto_promedio",
+                "caso13_persona_emisores_lista",
+                "interpretabilidad",
+            ]
+        )
+
+    tenure_columns = [
+        ("caso13_persona_antiguedad_meses", 1.0),
+        ("caso13_persona_antiguedad_anios", 12.0),
+        ("persona_antiguedad_meses", 1.0),
+        ("persona_antiguedad_anios", 12.0),
+    ]
+    for column, multiplier in tenure_columns:
+        if column in work.columns:
+            numeric = pd.to_numeric(work[column], errors="coerce") * multiplier
+            work = work.loc[numeric <= new_months_threshold].copy()
+            break
+
     if work.empty:
         return pd.DataFrame(
             columns=[
@@ -1629,10 +1749,11 @@ def question8_case13_new_employees(
     work["caso13_persona_emisores_lista"] = work["caso13_persona_emisores_lista"].apply(
         lambda value: value if isinstance(value, list) else []
     )
+    threshold_text = _format_months_threshold(new_months_threshold)
     work["interpretabilidad"] = work.apply(
         lambda row: (
             f"En la ventana '{timeframe}', la persona {_coalesce_str(row.get('persona'), default='sin_persona')} "
-            f"es un receptor con antigüedad ≤6 meses que recibió "
+            f"es un receptor con antigüedad ≤{threshold_text} que recibió "
             f"{int(row.get('caso13_persona_tx_recibidas', 0))} transferencias totales "
             f"desde {int(row.get('caso13_persona_emisores_unicos', 0))} emisores únicos, "
             f"de las cuales {int(row.get('caso13_persona_tx_altos', 0))} fueron de monto alto (percentil 90). "
@@ -1656,7 +1777,16 @@ def question8_case13_new_employees(
 
 
 def question9_case14_veterans_from_newcomers(
-    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    newcomer_definition: TenureDefinition = (
+        "months",
+        CASE14_NEW_EMPLOYEE_YEARS * 12.0,
+    ),
+    veteran_definition: TenureDefinition = (
+        "months",
+        CASE14_OLD_EMPLOYEE_YEARS * 12.0,
+    ),
 ) -> pd.DataFrame:
     """Prioriza veteranos que reciben pagos de emisores nuevos dentro de la red.
 
@@ -1667,6 +1797,14 @@ def question9_case14_veterans_from_newcomers(
         caso 14.
     timeframe
         Ventana temporal a analizar (``"todo_el_tiempo"`` por defecto).
+    newcomer_definition
+        Criterio para considerar a un emisor como recién ingresado. Acepta
+        ``("months", valor)`` o ``("percentile", valor)``. En el caso
+        percentil se imprime su equivalencia en meses.
+    veteran_definition
+        Criterio para clasificar a un receptor como veterano siguiendo el mismo
+        formato que ``newcomer_definition``. El valor por defecto preserva el
+        umbral original del caso: ``("months", 60.0)`` (equivalente a 5 años).
 
     Metodología
     -----------
@@ -1706,6 +1844,28 @@ def question9_case14_veterans_from_newcomers(
             ]
         )
 
+    tx = _get_section(reports, "transaccion", timeframe)
+    newcomer_months = _resolve_tenure_months(
+        tx,
+        "user_antiguedad_anios",
+        newcomer_definition,
+        default_months=CASE14_NEW_EMPLOYEE_YEARS * 12.0,
+        context="question9_case14_veterans_from_newcomers:newcomer",
+    )
+    veteran_months = _resolve_tenure_months(
+        tx,
+        "receptor_antiguedad_anios",
+        veteran_definition,
+        default_months=CASE14_OLD_EMPLOYEE_YEARS * 12.0,
+        context="question9_case14_veterans_from_newcomers:veteran",
+    )
+    if pd.isna(newcomer_months):
+        newcomer_months = CASE14_NEW_EMPLOYEE_YEARS * 12.0
+    if pd.isna(veteran_months):
+        veteran_months = CASE14_OLD_EMPLOYEE_YEARS * 12.0
+    newcomer_years = newcomer_months / 12.0 if newcomer_months is not None else CASE14_NEW_EMPLOYEE_YEARS
+    veteran_years = veteran_months / 12.0 if veteran_months is not None else CASE14_OLD_EMPLOYEE_YEARS
+
     work = personas[required].copy()
     mask = work["caso14_persona_flag_antiguo_recibe_de_nuevos"].fillna(0).astype(int) > 0
     work = work.loc[mask].copy()
@@ -1724,8 +1884,6 @@ def question9_case14_veterans_from_newcomers(
         work = work_original.loc[fallback_mask].copy()
 
     if work.empty:
-        tx = _get_section(reports, "transaccion", timeframe)
-
         def _heuristic_case14(transacciones: pd.DataFrame) -> pd.DataFrame:
             if transacciones.empty:
                 return pd.DataFrame()
@@ -1749,10 +1907,24 @@ def question9_case14_veterans_from_newcomers(
             if base.empty:
                 return pd.DataFrame()
 
-            thresholds = [
-                (0.5, 5.0),
+            default_thresholds = [
+                (CASE14_NEW_EMPLOYEE_YEARS, CASE14_OLD_EMPLOYEE_YEARS),
                 (1.0, 4.0),
                 (1.5, 3.5),
+            ]
+            scale_new = (
+                newcomer_years / CASE14_NEW_EMPLOYEE_YEARS
+                if CASE14_NEW_EMPLOYEE_YEARS > 0
+                else 1.0
+            )
+            scale_old = (
+                veteran_years / CASE14_OLD_EMPLOYEE_YEARS
+                if CASE14_OLD_EMPLOYEE_YEARS > 0
+                else 1.0
+            )
+            thresholds = [
+                (young * scale_new, veteran * scale_old)
+                for young, veteran in default_thresholds
             ]
             selected: pd.DataFrame | None = None
             applied: tuple[float, float] | None = None
@@ -1827,6 +1999,32 @@ def question9_case14_veterans_from_newcomers(
             ]
         )
 
+    tenure_columns = [
+        ("caso14_persona_antiguedad_receptor_meses", 1.0),
+        ("caso14_persona_antiguedad_receptor_anios", 12.0),
+        ("receptor_antiguedad_meses", 1.0),
+        ("receptor_antiguedad_anios", 12.0),
+    ]
+    for column, multiplier in tenure_columns:
+        if column in work.columns:
+            numeric = pd.to_numeric(work[column], errors="coerce") * multiplier
+            work = work.loc[numeric >= veteran_months].copy()
+            break
+
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "timeframe",
+                "persona",
+                "caso14_persona_tx_de_emisores_nuevos",
+                "caso14_persona_monto_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_unicos",
+                "caso14_persona_monto_promedio_de_emisores_nuevos",
+                "caso14_persona_emisores_nuevos_lista",
+                "interpretabilidad",
+            ]
+        )
+
     work["timeframe"] = timeframe
     work = work.sort_values(
         ["caso14_persona_tx_de_emisores_nuevos", "caso14_persona_monto_de_emisores_nuevos"],
@@ -1837,7 +2035,7 @@ def question9_case14_veterans_from_newcomers(
         reports,
         timeframe,
         persona_series,
-        max_sender_tenure_years=CASE14_NEW_EMPLOYEE_YEARS,
+        max_sender_tenure_years=newcomer_years,
     )
     work["caso14_persona_emisores_nuevos_lista"] = persona_series.astype(str).map(
         sender_lists
@@ -1845,11 +2043,13 @@ def question9_case14_veterans_from_newcomers(
     work["caso14_persona_emisores_nuevos_lista"] = work[
         "caso14_persona_emisores_nuevos_lista"
     ].apply(lambda value: value if isinstance(value, list) else [])
+    newcomer_text = _format_months_threshold(newcomer_months)
+    veteran_text = _format_months_threshold(veteran_months)
     work["interpretabilidad"] = work.apply(
         lambda row: (
             f"Dentro de '{timeframe}', la persona {_coalesce_str(row.get('persona'), default='sin_persona')} "
-            f"(antigüedad ≥5 años) recibió {int(row.get('caso14_persona_tx_de_emisores_nuevos', 0))} pagos "
-            f"desde recién ingresados (≤6 meses), provenientes de "
+            f"(antigüedad ≥{veteran_text}) recibió {int(row.get('caso14_persona_tx_de_emisores_nuevos', 0))} pagos "
+            f"desde recién ingresados (≤{newcomer_text}), provenientes de "
             f"{int(row.get('caso14_persona_emisores_nuevos_unicos', 0))} emisores distintos. "
             f"Estos movimientos suman {_format_float(row.get('caso14_persona_monto_de_emisores_nuevos', 0))} "
             f"con un promedio individual de {_format_float(row.get('caso14_persona_monto_promedio_de_emisores_nuevos', 0))}."
