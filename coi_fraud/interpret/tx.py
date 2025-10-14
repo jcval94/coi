@@ -60,7 +60,7 @@ def tx_interpretation(r):
 
     if bool(r.get("sig_quid_pro_quo", False)):
         score = float(r.get("feat_quid_score", 0) or 0)
-        msgs.append(f"Posible quid-pro-quo (score≈{score:.2f}).")
+        msgs.append(f"Posible algo por algo (score≈{score:.2f}).")
         _add_part("quid", weights.get("quid", 0.0))
 
     if bool(r.get("sig_reference_reuse", False)):
@@ -130,7 +130,7 @@ def tx_interpretation(r):
         "nearthr": "cerca de umbral",
         "cycle": "ciclo de fondos",
         "triangle": "triángulos",
-        "quid": "quid-pro-quo",
+        "quid": "algo por algo",
         "ref": "referencia reutilizada",
         "chg": "cambio brusco",
         "new": "nuevo enlace",

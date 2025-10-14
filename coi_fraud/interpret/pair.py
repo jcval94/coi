@@ -5,7 +5,7 @@ def pair_interpretation(r):
     if r["pct_smurf"]>0: sigs.append("smurfing")
     if r["pct_freq"]>0: sigs.append("alta frecuencia")
     if r.get("pct_recurrent",0)>0: sigs.append("recurrente")
-    if r.get("pct_quid_pro_quo",0)>0: sigs.append("quid-pro-quo")
+    if r.get("pct_quid_pro_quo",0)>0: sigs.append("algo por algo")
     if r.get("pct_reference_reuse",0)>0: sigs.append("referencia repetida")
     if r.get("pct_change_point",0)>0: sigs.append("cambio brusco")
     if r.get("pct_new_edge",0)>0: sigs.append("nuevo enlace")

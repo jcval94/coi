@@ -215,10 +215,23 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 
-- **Q3 – Pares con rasgos Quid Pro Quo** (`question3_quid_pairs`):
-  - **¿Qué detecta?** Duplas de personas que parecen intercambiar favores o beneficios entre sí (el “yo te ayudo si tú me ayudas”).
-  - **¿Cómo lo hace?** Revisa resúmenes y transacciones detalladas, busca pares con puntajes altos de quid pro quo, presencia de jefes y señales de aprobaciones o compensaciones. Si la información es escasa, usa una versión más flexible para no dejar fuera casos relevantes.
-  - **Cómo leer sus columnas principales:** `quid_tx_count` (cuántos favores sospechosos se repiten), `quid_score_max` y `quid_score_avg` (qué tan grave y constante es el patrón), `quid_manager_ratio` (qué tanto intervienen jefes) y `quid_aprob_ratio` / `quid_comp_ratio` (si hubo aprobaciones o pagos de vuelta).
+- **Q3 – Pares con rasgos Algo por Algo** (`question3_quid_pairs`):
+  - **¿Qué detecta?** Duplas de personas que parecen intercambiar favores entre sí (el “yo te ayudo si tú me ayudas”), mostrando en lenguaje sencillo cuántas veces sucede, qué tan grave es y cuál es la evidencia más clara.
+  - **¿Cómo lo hace?** Revisa resúmenes y transacciones detalladas, prioriza los pares con puntajes altos de “algo por algo”, participación de jefes y menciones de aprobaciones o compensaciones. Si no hay suficientes hallazgos, relaja los filtros para no perder pistas y conecta las transacciones originales para describir fechas, montos, jerarquías, desfases y textos.
+  - **Cómo leer sus columnas principales:**
+    - `cantidad_movimientos_con_indicio_de_algo_por_algo`, `puntaje_algo_por_algo_mas_alto_en_el_par`, `puntaje_algo_por_algo_promedio_en_el_par` y `porcentaje_movimientos_donde_participa_un_jefe`: muestran cuántas veces se detectó el patrón, qué tan fuerte fue y si hubo mandos involucrados.
+    - `porcentaje_movimientos_con_texto_de_aprobacion` / `porcentaje_movimientos_con_texto_de_compensacion` más `cantidad_movimientos_con_texto_de_aprobacion` / `cantidad_movimientos_con_texto_de_compensacion`: indican con qué frecuencia aparecen palabras de aprobación o de promesa de pago y en cuántos movimientos específicos.
+    - `monto_total_de_los_movimientos_relacionados`, `monto_mas_alto_de_los_movimientos_relacionados`, `riesgo_maximo_de_los_movimientos_relacionados`, `riesgo_promedio_de_los_movimientos_relacionados`: dimensionan la parte económica y el riesgo observado.
+    - `fecha_del_primer_movimiento_relacionado`, `fecha_del_ultimo_movimiento_relacionado`, `tipos_de_relacion_observados_entre_las_personas`: explican la ventana temporal y los lazos jerárquicos o familiares mencionados.
+    - Los campos `ejemplo_clave_*` describen el movimiento más ilustrativo (fecha, monto, puntaje, riesgo, relación, desfase, si menciona aprobación o compensación, descripción, referencia y si apareció tras relajar filtros).
+    - `interpretabilidad`: texto simple que resume el caso y aclara si se usaron filtros relajados.
+  - **Ejemplo con “palitos y bolitas”:**
+    1. Supón que “Jefa_Luisa” autoriza tres gastos a “Proveedor_Julio”. Eso llena `cantidad_movimientos_con_indicio_de_algo_por_algo` con `3` y el identificador queda `Jefa_Luisa->Proveedor_Julio`.
+    2. Como dos mensajes dicen “aprobado por dirección”, `porcentaje_movimientos_con_texto_de_aprobacion` muestra `67%` y `cantidad_movimientos_con_texto_de_aprobacion` vale `2`.
+    3. El pago más alto fue de 9,000, por eso `monto_mas_alto_de_los_movimientos_relacionados` enseña `9,000.00` mientras que el total suma `18,500.00`.
+    4. Si el modelo calculó puntajes de 3.8, 3.2 y 2.9, entonces `puntaje_algo_por_algo_mas_alto_en_el_par` vale `3.8` y el promedio `3.3`.
+    5. El bloque `ejemplo_clave_*` copia el movimiento más claro (por ejemplo el de 9,000) para que puedas leer la fecha exacta, la relación “Jefa → Proveedor”, el desfase de días y el texto libre, todo en una sola línea.
+    6. Finalmente `interpretabilidad` junta esas piezas y explica en un párrafo por qué ese par luce riesgoso.
   - **Parámetros clave:** `timeframe`; `min_score` (2.2 por defecto); `min_manager_ratio` (0.5 por defecto).
   - **Visualización rápida:**
     ```python
@@ -230,11 +243,23 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.tight_layout()
     plt.show()
     ```
+  - **Visualización caso a caso:**
+    ```python
+    import matplotlib.pyplot as plt
+    from experiment_questions import question3_quid_pairs
+    from experiment_visualizations import plot_q3_algo_pair_detalle
+
+    par = question3_quid_pairs(reports).query("nivel_respuesta == 'resumen_del_par_algo_por_algo'").iloc[0]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    plot_q3_algo_pair_detalle(par, ax=ax)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 - **Q4 – Autorizaciones con valor negativo vs. carga** (`question4_quid_negative_value_vs_load`):
   - **¿Qué detecta?** Casos en los que alguien aprueba algo de valor menor al que declaró al inicio (por ejemplo, autoriza un gasto que luego se compensa con un favor).
   - **¿Cómo lo hace?** Busca transacciones con desfases fuertes entre el momento de la carga y el valor final. Si no hay suficientes ejemplos, toma los 10 desfases más pequeños o los puntajes más altos. También identifica quién pudo ser el responsable dentro de la cadena de mando.
-  - **Cómo leer los números:** reutiliza las mismas columnas explicadas en Q3 (`quid_tx_count`, `quid_score_max`, `quid_score_avg`, `quid_manager_ratio`, `quid_aprob_ratio`, `quid_comp_ratio`) para dimensionar la recurrencia y la gravedad del hallazgo.
+  - **Cómo leer los números:** reutiliza las mismas columnas explicadas en Q3 (`cantidad_movimientos_con_indicio_de_algo_por_algo`, `puntaje_algo_por_algo_mas_alto_en_el_par`, `puntaje_algo_por_algo_promedio_en_el_par`, `porcentaje_movimientos_donde_participa_un_jefe`, `porcentaje_movimientos_con_texto_de_aprobacion`, `porcentaje_movimientos_con_texto_de_compensacion`) para dimensionar la recurrencia y la gravedad del hallazgo.
   - **Parámetros clave:** `timeframe`.
   - **Visualización rápida:**
     ```python
@@ -575,7 +600,7 @@ python -m coi_fraud --csv ./mis_transacciones.csv --out ./forensic_outputs
 
 | Término | Definición resumida | Cómo se calcula/activa |
 | --- | --- | --- |
-| **Quid Pro Quo** (`sig_quid_pro_quo`, `feat_quid_score`, `feat_quid_value_vs_load_days`, `feat_quid_rel_label`) | Banderas que alertan sobre posibles intercambios de favores entre jefes y subordinados. | Combina relaciones jerárquicas, palabras clave de aprobaciones o compensaciones, montos fuera de lo normal, cercanía a umbrales y desfases entre carga y valor. Con todo eso calcula un puntaje; si rebasa el umbral, activa la señal y guarda los datos por par.【F:coi_fraud/features/quid.py†L176-L287】 |
+| **Algo por Algo** (`sig_quid_pro_quo`, `feat_quid_score`, `feat_quid_value_vs_load_days`, `feat_quid_rel_label`) | Banderas que alertan sobre posibles intercambios de favores entre jefes y subordinados. | Combina relaciones jerárquicas, palabras clave de aprobaciones o compensaciones, montos fuera de lo normal, cercanía a umbrales y desfases entre carga y valor. Con todo eso calcula un puntaje; si rebasa el umbral, activa la señal y guarda los datos por par.【F:coi_fraud/features/quid.py†L176-L287】 |
 | **Yo-Yo** (`sig_yoyo`) | Detecta pares que se envían dinero de ida y vuelta con montos casi iguales. | Agrupa el par en ambas direcciones, ordena por tiempo y prende la bandera cuando identifica transferencias opuestas en pocas horas con diferencias mínimas.【F:coi_fraud/features/yoyo.py†L7-L43】 |
 | **Smurfing** (`sig_smurf`) | Señala depósitos divididos en partes pequeñas que, sumados, cruzan un umbral. | Ordena las operaciones por par, recorre ventanas de días y enciende la señal si el acumulado supera los límites configurados sin que ningún pago individual lo haga.【F:coi_fraud/features/smurf.py†L7-L48】 |
 | **Change Point / Nuevo enlace** (`sig_pair_change_point`, `sig_pair_new_edge`, `feat_pair_month_amount_ratio`) | Advierte cuando surge un par nuevo o cambia drásticamente su nivel de actividad. | Resume montos y conteos mensuales por par, los compara con el mes anterior y marca picos grandes o arranques que aparecen tras un buen tiempo sin relación.【F:coi_fraud/features/change_points.py†L10-L140】 |
