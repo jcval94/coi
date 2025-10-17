@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import logging
 import re
 import unicodedata
 from pathlib import Path
@@ -41,9 +42,12 @@ from coi_fraud.text_utils import (
 
 DEFAULT_TIMEFRAME = "todo_el_tiempo"
 DEFAULT_OUTPUT_DIR = Path("answers")
-QUESTION1_DIRECTIONS: tuple[str, str] = (
+logger = logging.getLogger(__name__)
+
+QUESTION1_DIRECTIONS: tuple[str, str, str] = (
     "manager_a_subordinado",
     "subordinado_a_manager",
+    "ambos",
 )
 NLP_CATEGORIES = (
     "SOBORNO",
@@ -816,7 +820,7 @@ def question1_manager_nlp(
     timeframe: str = DEFAULT_TIMEFRAME,
     categories: Iterable[str] = NLP_CATEGORIES,
     *,
-    direction: Literal[QUESTION1_DIRECTIONS] = "manager_a_subordinado",
+    direction: Literal[QUESTION1_DIRECTIONS] = "ambos",
 ) -> pd.DataFrame:
     """Detecta pagos sospechosos entre managers y subordinados usando etiquetas NLP.
 
@@ -833,11 +837,11 @@ def question1_manager_nlp(
         defecto se emplea :data:`NLP_CATEGORIES`.
     direction
         Orientación del flujo de pagos a priorizar. Acepta ``"manager_a_subordinado"``
-        (por defecto) para pagos enviados por managers y ``"subordinado_a_manager"``
-        para el sentido inverso. Cuando la columna :data:`~coi_fraud.schemas.COL_RELATION`
-        indica explícitamente que el manager es el emisor o el receptor, la función
-        utilizará esa pista para determinar el sentido real del flujo antes de aplicar
-        el filtro.
+        para pagos enviados por managers, ``"subordinado_a_manager"`` para el sentido
+        inverso y ``"ambos"`` (valor por defecto) para conservar todas las direcciones
+        detectadas. Cuando la columna :data:`~coi_fraud.schemas.COL_RELATION` indica
+        explícitamente que el manager es el emisor o el receptor, la función utilizará
+        esa pista para determinar el sentido real del flujo antes de aplicar el filtro.
 
     Metodología
     -----------
@@ -862,6 +866,11 @@ def question1_manager_nlp(
     tx = _standardize_columns(
         _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
     )
+    logger.info(
+        "question1_manager_nlp: transacciones disponibles en '%s'=%d",
+        timeframe,
+        len(tx),
+    )
     if tx.empty:
         return pd.DataFrame(
             columns=[
@@ -869,6 +878,7 @@ def question1_manager_nlp(
                 "month_id",
                 "manager_user_id",
                 "subordinado_user_id",
+                "flow_direction",
                 "nlp_concepto_sospechoso",
                 "nlp_concepto_crudo",
                 "tx_count",
@@ -888,6 +898,10 @@ def question1_manager_nlp(
         )
 
     hits = _manager_nlp_hits(tx, categories)
+    logger.info(
+        "question1_manager_nlp: coincidencias NLP tras filtro manager-subordinado=%d",
+        len(hits),
+    )
     if hits.empty:
         return pd.DataFrame(
             columns=[
@@ -895,6 +909,7 @@ def question1_manager_nlp(
                 "month_id",
                 "manager_user_id",
                 "subordinado_user_id",
+                "flow_direction",
                 "nlp_concepto_sospechoso",
                 "nlp_concepto_crudo",
                 "tx_count",
@@ -913,6 +928,12 @@ def question1_manager_nlp(
         # Devuelve objetos estándar en lugar de ``pd.NA`` para evitar ambigüedad al
         # evaluar los valores en funciones auxiliares.
         return normalized.mask(normalized.isna(), None)
+    def _resolve_default_direction() -> str:
+        if direction in ("manager_a_subordinado", "subordinado_a_manager"):
+            return direction
+        return "manager_a_subordinado"
+
+    default_direction = _resolve_default_direction()
 
     if COL_RELATION in hits.columns:
         relation = hits[COL_RELATION].fillna("").astype(str).str.lower()
@@ -920,6 +941,8 @@ def question1_manager_nlp(
         subordinate_ids = hits[COL_SENDER_ID].astype("string")
 
         manager_is_sender = relation.str.contains("manager_del_receptor")
+        manager_is_receiver = relation.str.contains("manager_del_emisor")
+
         manager_ids.loc[manager_is_sender] = hits.loc[
             manager_is_sender, COL_SENDER_ID
         ].astype("string")
@@ -927,11 +950,9 @@ def question1_manager_nlp(
             manager_is_sender, COL_RECEIVER_ID
         ].astype("string")
 
-        manager_is_receiver = relation.str.contains("manager_del_emisor")
-
         unknown_orientation = ~(manager_is_sender | manager_is_receiver)
         if unknown_orientation.any():
-            if direction == "manager_a_subordinado":
+            if default_direction == "manager_a_subordinado":
                 manager_ids.loc[unknown_orientation] = hits.loc[
                     unknown_orientation, COL_SENDER_ID
                 ].astype("string")
@@ -950,9 +971,33 @@ def question1_manager_nlp(
             "subordinado_a_manager", index=hits.index, dtype="string"
         )
         actual_direction.loc[manager_is_sender] = "manager_a_subordinado"
-        actual_direction.loc[unknown_orientation] = direction
+        actual_direction.loc[unknown_orientation] = default_direction
+    else:
+        if default_direction == "manager_a_subordinado":
+            manager_ids = hits[COL_SENDER_ID].astype("string")
+            subordinate_ids = hits[COL_RECEIVER_ID].astype("string")
+        else:
+            manager_ids = hits[COL_RECEIVER_ID].astype("string")
+            subordinate_ids = hits[COL_SENDER_ID].astype("string")
+        actual_direction = pd.Series(default_direction, index=hits.index, dtype="string")
 
-        hits = hits.loc[actual_direction == direction].copy()
+    direction_counts = actual_direction.value_counts(dropna=False).to_dict()
+    logger.info(
+        "question1_manager_nlp: direcciones detectadas=%s",
+        direction_counts,
+    )
+
+    if direction != "ambos":
+        mask = actual_direction == direction
+        hits = hits.loc[mask].copy()
+        manager_ids = manager_ids.loc[hits.index]
+        subordinate_ids = subordinate_ids.loc[hits.index]
+        actual_direction = actual_direction.loc[hits.index]
+        logger.info(
+            "question1_manager_nlp: filas tras aplicar dirección '%s'=%d",
+            direction,
+            len(hits),
+        )
         if hits.empty:
             return pd.DataFrame(
                 columns=[
@@ -960,6 +1005,7 @@ def question1_manager_nlp(
                     "month_id",
                     "manager_user_id",
                     "subordinado_user_id",
+                    "flow_direction",
                     "nlp_concepto_sospechoso",
                     "nlp_concepto_crudo",
                     "nlp_descripciones",
@@ -968,20 +1014,22 @@ def question1_manager_nlp(
                     "interpretabilidad",
                 ]
             )
-
-        manager_ids = manager_ids.loc[hits.index]
-        subordinate_ids = subordinate_ids.loc[hits.index]
     else:
-        if direction == "manager_a_subordinado":
-            manager_ids = hits[COL_SENDER_ID].astype("string")
-            subordinate_ids = hits[COL_RECEIVER_ID].astype("string")
-        else:
-            manager_ids = hits[COL_RECEIVER_ID].astype("string")
-            subordinate_ids = hits[COL_SENDER_ID].astype("string")
+        logger.info(
+            "question1_manager_nlp: filas conservadas al incluir ambos flujos=%d",
+            len(hits),
+        )
 
-    hits["manager_user_id"] = _normalize_identifier(manager_ids)
-    hits["subordinado_user_id"] = _normalize_identifier(subordinate_ids)
+    hits["_flow_direction"] = actual_direction
+    hits["manager_user_id"] = _normalize_identifier(manager_ids.loc[hits.index])
+    hits["subordinado_user_id"] = _normalize_identifier(
+        subordinate_ids.loc[hits.index]
+    )
     hits = hits.dropna(subset=["manager_user_id", "subordinado_user_id"])
+    logger.info(
+        "question1_manager_nlp: filas tras normalizar identificadores=%d",
+        len(hits),
+    )
     if hits.empty:
         return pd.DataFrame(
             columns=[
@@ -989,6 +1037,7 @@ def question1_manager_nlp(
                 "month_id",
                 "manager_user_id",
                 "subordinado_user_id",
+                "flow_direction",
                 "nlp_concepto_sospechoso",
                 "nlp_concepto_crudo",
                 "nlp_descripciones",
@@ -998,6 +1047,22 @@ def question1_manager_nlp(
             ]
         )
 
+    def _select_flow_direction(values: Iterable[Any]) -> str:
+        unique: list[str] = []
+        for value in values:
+            if pd.isna(value) or value in (None, ""):
+                continue
+            text = str(value)
+            if text not in unique:
+                unique.append(text)
+            if len(unique) > 1:
+                break
+        if not unique:
+            return default_direction
+        if len(unique) == 1:
+            return unique[0]
+        return "ambos"
+
     aggregations: dict[str, tuple[str, Any]] = {
         "tx_count": (COL_AMOUNT, "count"),
         "monto_total": (COL_AMOUNT, "sum"),
@@ -1006,6 +1071,7 @@ def question1_manager_nlp(
             "matched_category",
             _combine_unique_categories,
         ),
+        "_flow_direction": ("_flow_direction", _select_flow_direction),
     }
     if COL_DESCRIPTION in hits.columns:
         aggregations["nlp_descripciones"] = (
@@ -1027,6 +1093,7 @@ def question1_manager_nlp(
         .agg(**aggregations)
         .reset_index()
     )
+    agg = agg.rename(columns={"_flow_direction": "flow_direction"})
     agg = agg.sort_values(["tx_count", "monto_total"], ascending=[False, False])
     agg["timeframe"] = timeframe
     agg["nlp_concepto_crudo"] = agg["nlp_concepto_crudo"].fillna("")
@@ -1035,31 +1102,25 @@ def question1_manager_nlp(
     agg["nlp_concepto_sospechoso"] = agg["nlp_concepto_sospechoso"].apply(
         lambda values: values if isinstance(values, list) else []
     )
+    agg["flow_direction"] = agg["flow_direction"].fillna(default_direction)
     agg["_concepto_label"] = agg["nlp_concepto_sospechoso"].apply(
         lambda values: ", ".join(values) if values else "SIN_CONCEPTO"
     )
-    if direction == "manager_a_subordinado":
-        def _build_message(row: pd.Series) -> str:
-            return (
-                f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
-                f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
-                f"{int(row.get('tx_count', 0))} pagos al subordinado "
-                f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
-                f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
-                f"{_format_float(row.get('monto_total', 0))} en monto total."
-                + (
-                    f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
-                    if str(row.get('nlp_concepto_crudo', '')).strip()
-                    else ""
-                )
-                + (
-                    f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
-                    if str(row.get('nlp_descripciones', '')).strip()
-                    else ""
-                )
+    def _build_message(row: pd.Series) -> str:
+        flow = str(row.get("flow_direction") or default_direction)
+        base_details = (
+            (
+                f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
+                if str(row.get("nlp_concepto_crudo", "")).strip()
+                else ""
             )
-    else:
-        def _build_message(row: pd.Series) -> str:
+            + (
+                f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
+                if str(row.get("nlp_descripciones", "")).strip()
+                else ""
+            )
+        )
+        if flow == "subordinado_a_manager":
             return (
                 f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
                 f"el subordinado {row.get('subordinado_user_id', 'sin_subordinado')} envió "
@@ -1067,17 +1128,27 @@ def question1_manager_nlp(
                 f"{row.get('manager_user_id', 'sin_manager')} etiquetados como "
                 f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
                 f"{_format_float(row.get('monto_total', 0))} en monto total."
-                + (
-                    f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
-                    if str(row.get('nlp_concepto_crudo', '')).strip()
-                    else ""
-                )
-                + (
-                    f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
-                    if str(row.get('nlp_descripciones', '')).strip()
-                    else ""
-                )
+                + base_details
             )
+        if flow == "ambos":
+            return (
+                f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
+                f"se registraron pagos en ambos sentidos entre el manager "
+                f"{row.get('manager_user_id', 'sin_manager')} y el subordinado "
+                f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
+                f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
+                f"{_format_float(row.get('monto_total', 0))} en monto total."
+                + base_details
+            )
+        return (
+            f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
+            f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
+            f"{int(row.get('tx_count', 0))} pagos al subordinado "
+            f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
+            f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
+            f"{_format_float(row.get('monto_total', 0))} en monto total."
+            + base_details
+        )
 
     agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
     agg = agg.drop(columns=["_concepto_label"])
@@ -1086,6 +1157,7 @@ def question1_manager_nlp(
         "month_id",
         "manager_user_id",
         "subordinado_user_id",
+        "flow_direction",
         "nlp_concepto_sospechoso",
         "nlp_concepto_crudo",
         "nlp_descripciones",
@@ -6628,6 +6700,12 @@ def _print_summary(
 
 
 def main() -> None:
+    if not logging.getLogger().hasHandlers():
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
+
     parser = _build_parser()
     args = parser.parse_args()
 
