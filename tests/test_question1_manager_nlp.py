@@ -102,3 +102,29 @@ def test_question1_manager_nlp_excludes_teammates_from_manager_match() -> None:
     )
 
     assert result.empty, "No debe detectar relación manager-subordinado entre compañeros"
+
+
+def test_question1_manager_nlp_fallbacks_to_detected_direction() -> None:
+    """Cuando solo hay flujo subordinado→manager debe devolver resultados."""
+
+    df = pd.DataFrame(
+        [
+            {
+                "month_id": "2024-06",
+                COL_SENDER_ID: "EMP-500",
+                COL_RECEIVER_ID: "MGR-321",
+                COL_AMOUNT: 4_200.0,
+                COL_DESCRIPTION: "Pago directo de soborno documentado",
+                COL_RELATION: "manager_del_emisor",
+                "nlp_concepto_sospechoso": "SOBORNO",
+            }
+        ]
+    )
+    reports = {"transaccion": {DEFAULT_TIMEFRAME: df}}
+
+    result = question1_manager_nlp(reports, timeframe=DEFAULT_TIMEFRAME)
+
+    assert not result.empty, "Debe aprovechar la orientación detectada en 'relacion'"
+    row = result.iloc[0]
+    assert row["manager_user_id"] == "MGR-321"
+    assert row["subordinado_user_id"] == "EMP-500"
