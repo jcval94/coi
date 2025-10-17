@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import logging
 import re
 import unicodedata
 from pathlib import Path
@@ -45,6 +46,15 @@ QUESTION1_DIRECTIONS: tuple[str, str] = (
     "manager_a_subordinado",
     "subordinado_a_manager",
 )
+LOGGER = logging.getLogger(__name__)
+
+
+def _opposite_direction(direction: str) -> str:
+    """Devuelve la orientación complementaria para Q1."""
+
+    if direction == "manager_a_subordinado":
+        return "subordinado_a_manager"
+    return "manager_a_subordinado"
 NLP_CATEGORIES = (
     "SOBORNO",
     "FACILITACIÓN",
@@ -964,6 +974,11 @@ def question1_manager_nlp(
     tx = _standardize_columns(
         _get_section(reports, "transaccion", timeframe), TRANSACTION_COLUMN_ALIASES
     )
+    LOGGER.info(
+        "Q1 manager NLP: %d transacciones disponibles para timeframe '%s'",
+        len(tx),
+        timeframe,
+    )
     if tx.empty:
         return pd.DataFrame(
             columns=[
@@ -990,6 +1005,10 @@ def question1_manager_nlp(
         )
 
     hits = _manager_nlp_hits(tx, categories)
+    LOGGER.info(
+        "Q1 manager NLP: %d coincidencias tras aplicar categorías NLP",
+        len(hits),
+    )
     if hits.empty:
         return pd.DataFrame(
             columns=[
@@ -1016,6 +1035,7 @@ def question1_manager_nlp(
         # evaluar los valores en funciones auxiliares.
         return normalized.mask(normalized.isna(), None)
 
+    actual_direction = pd.Series(direction, index=hits.index, dtype="string")
     if COL_RELATION in hits.columns:
         relation = hits[COL_RELATION].fillna("").astype(str).str.lower()
         manager_ids = hits[COL_RECEIVER_ID].astype("string")
@@ -1054,23 +1074,48 @@ def question1_manager_nlp(
         actual_direction.loc[manager_is_sender] = "manager_a_subordinado"
         actual_direction.loc[unknown_orientation] = direction
 
-        hits = hits.loc[actual_direction == direction].copy()
-        if hits.empty:
-            return pd.DataFrame(
-                columns=[
-                    "timeframe",
-                    "month_id",
-                    "manager_user_id",
-                    "subordinado_user_id",
-                    "nlp_concepto_sospechoso",
-                    "nlp_concepto_crudo",
-                    "nlp_descripciones",
-                    "tx_count",
-                    "monto_total",
-                    "interpretabilidad",
-                ]
-            )
+        hits["_actual_direction"] = actual_direction
+        direction_distribution = actual_direction.value_counts(dropna=False).to_dict()
+        LOGGER.info(
+            "Q1 manager NLP: distribución por orientación detectada %s",
+            direction_distribution,
+        )
 
+        mask_requested = actual_direction == direction
+        filtered_hits = hits.loc[mask_requested].copy()
+        if filtered_hits.empty:
+            opposite = _opposite_direction(direction)
+            opposite_count = int((actual_direction == opposite).sum())
+            if opposite_count:
+                LOGGER.info(
+                    "Q1 manager NLP: sin filas para '%s'; usando orientación '%s' con %d coincidencias",
+                    direction,
+                    opposite,
+                    opposite_count,
+                )
+                direction = opposite
+                filtered_hits = hits.loc[actual_direction == direction].copy()
+            else:
+                LOGGER.info(
+                    "Q1 manager NLP: no hay filas luego de filtrar por orientación '%s'",
+                    direction,
+                )
+                return pd.DataFrame(
+                    columns=[
+                        "timeframe",
+                        "month_id",
+                        "manager_user_id",
+                        "subordinado_user_id",
+                        "nlp_concepto_sospechoso",
+                        "nlp_concepto_crudo",
+                        "nlp_descripciones",
+                        "tx_count",
+                        "monto_total",
+                        "interpretabilidad",
+                    ]
+                )
+
+        hits = filtered_hits
         manager_ids = manager_ids.loc[hits.index]
         subordinate_ids = subordinate_ids.loc[hits.index]
     else:
@@ -1081,9 +1126,19 @@ def question1_manager_nlp(
             manager_ids = hits[COL_RECEIVER_ID].astype("string")
             subordinate_ids = hits[COL_SENDER_ID].astype("string")
 
+        hits["_actual_direction"] = direction
+        LOGGER.info(
+            "Q1 manager NLP: sin columna 'relacion'; se asume orientación '%s'",
+            direction,
+        )
+
     hits["manager_user_id"] = _normalize_identifier(manager_ids)
     hits["subordinado_user_id"] = _normalize_identifier(subordinate_ids)
     hits = hits.dropna(subset=["manager_user_id", "subordinado_user_id"])
+    LOGGER.info(
+        "Q1 manager NLP: %d filas tras normalizar identificadores",
+        len(hits),
+    )
     if hits.empty:
         return pd.DataFrame(
             columns=[
@@ -1120,6 +1175,8 @@ def question1_manager_nlp(
             "nlp_descripciones",
             _combine_unique_texts,
         )
+
+    hits = hits.drop(columns=["_actual_direction"], errors="ignore")
 
     agg = (
         hits.groupby(
@@ -1183,6 +1240,11 @@ def question1_manager_nlp(
 
     agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
     agg = agg.drop(columns=["_concepto_label"])
+    LOGGER.info(
+        "Q1 manager NLP: %d filas agregadas para orientación '%s'",
+        len(agg),
+        direction,
+    )
     columns = [
         "timeframe",
         "month_id",
