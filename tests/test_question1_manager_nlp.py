@@ -46,6 +46,7 @@ def test_question1_manager_nlp_infers_manager_from_receiver_id() -> None:
     row = result.iloc[0]
     assert row["manager_user_id"] == "MGR-007"
     assert row["subordinado_user_id"] == "EMP-900"
+    assert row["direction"] == "subordinado_a_manager"
     assert "SOBORNO" in row["nlp_concepto_sospechoso"], row["nlp_concepto_sospechoso"]
 
 
@@ -76,6 +77,7 @@ def test_question1_manager_nlp_handles_empty_relation_column() -> None:
     row = result.iloc[0]
     assert row["manager_user_id"] == "MGR-900"
     assert row["subordinado_user_id"] == "EMP-123"
+    assert row["direction"] == "manager_a_subordinado"
 
 
 def test_question1_manager_nlp_excludes_teammates_from_manager_match() -> None:
@@ -128,3 +130,4 @@ def test_question1_manager_nlp_fallbacks_to_detected_direction() -> None:
     row = result.iloc[0]
     assert row["manager_user_id"] == "MGR-321"
     assert row["subordinado_user_id"] == "EMP-500"
+    assert row["direction"] == "subordinado_a_manager"
