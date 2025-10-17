@@ -42,9 +42,10 @@ from coi_fraud.text_utils import (
 
 DEFAULT_TIMEFRAME = "todo_el_tiempo"
 DEFAULT_OUTPUT_DIR = Path("answers")
-QUESTION1_DIRECTIONS: tuple[str, str] = (
+QUESTION1_DIRECTIONS: tuple[str, ...] = (
     "manager_a_subordinado",
     "subordinado_a_manager",
+    "both",
 )
 LOGGER = logging.getLogger(__name__)
 
@@ -928,7 +929,7 @@ def question1_manager_nlp(
     timeframe: str = DEFAULT_TIMEFRAME,
     categories: Iterable[str] = NLP_CATEGORIES,
     *,
-    direction: Literal[QUESTION1_DIRECTIONS] = "manager_a_subordinado",
+    direction: Literal[QUESTION1_DIRECTIONS] = "both",
 ) -> pd.DataFrame:
     """Detecta pagos sospechosos entre managers y subordinados usando etiquetas NLP.
 
@@ -945,11 +946,11 @@ def question1_manager_nlp(
         defecto se emplea :data:`NLP_CATEGORIES`.
     direction
         Orientación del flujo de pagos a priorizar. Acepta ``"manager_a_subordinado"``
-        (por defecto) para pagos enviados por managers y ``"subordinado_a_manager"``
-        para el sentido inverso. Cuando la columna :data:`~coi_fraud.schemas.COL_RELATION`
-        indica explícitamente que el manager es el emisor o el receptor, la función
-        utilizará esa pista para determinar el sentido real del flujo antes de aplicar
-        el filtro.
+        para pagos enviados por managers, ``"subordinado_a_manager"`` para el sentido
+        inverso y ``"both"`` (por defecto) para conservar ambos flujos. Cuando la
+        columna :data:`~coi_fraud.schemas.COL_RELATION` indica explícitamente que el
+        manager es el emisor o el receptor, la función utilizará esa pista para
+        determinar el sentido real del flujo antes de aplicar el filtro.
 
     Metodología
     -----------
@@ -988,6 +989,7 @@ def question1_manager_nlp(
                 "subordinado_user_id",
                 "nlp_concepto_sospechoso",
                 "nlp_concepto_crudo",
+                "direction",
                 "tx_count",
                 "monto_total",
                 "nlp_descripciones",
@@ -1018,6 +1020,7 @@ def question1_manager_nlp(
                 "subordinado_user_id",
                 "nlp_concepto_sospechoso",
                 "nlp_concepto_crudo",
+                "direction",
                 "tx_count",
                 "monto_total",
                 "nlp_descripciones",
@@ -1035,7 +1038,10 @@ def question1_manager_nlp(
         # evaluar los valores en funciones auxiliares.
         return normalized.mask(normalized.isna(), None)
 
-    actual_direction = pd.Series(direction, index=hits.index, dtype="string")
+    fallback_direction = (
+        "subordinado_a_manager" if direction == "subordinado_a_manager" else "manager_a_subordinado"
+    )
+    actual_direction = pd.Series(fallback_direction, index=hits.index, dtype="string")
     if COL_RELATION in hits.columns:
         relation = hits[COL_RELATION].fillna("").astype(str).str.lower()
         manager_ids = hits[COL_RECEIVER_ID].astype("string")
@@ -1050,10 +1056,11 @@ def question1_manager_nlp(
         ].astype("string")
 
         manager_is_receiver = relation.str.contains("manager_del_emisor")
+        actual_direction.loc[manager_is_receiver] = "subordinado_a_manager"
 
         unknown_orientation = ~(manager_is_sender | manager_is_receiver)
         if unknown_orientation.any():
-            if direction == "manager_a_subordinado":
+            if fallback_direction == "manager_a_subordinado":
                 manager_ids.loc[unknown_orientation] = hits.loc[
                     unknown_orientation, COL_SENDER_ID
                 ].astype("string")
@@ -1068,68 +1075,70 @@ def question1_manager_nlp(
                     unknown_orientation, COL_SENDER_ID
                 ].astype("string")
 
-        actual_direction = pd.Series(
-            "subordinado_a_manager", index=hits.index, dtype="string"
-        )
         actual_direction.loc[manager_is_sender] = "manager_a_subordinado"
-        actual_direction.loc[unknown_orientation] = direction
+        actual_direction.loc[unknown_orientation] = fallback_direction
 
-        hits["_actual_direction"] = actual_direction
+        hits["direction"] = actual_direction
         direction_distribution = actual_direction.value_counts(dropna=False).to_dict()
         LOGGER.info(
             "Q1 manager NLP: distribución por orientación detectada %s",
             direction_distribution,
         )
 
-        mask_requested = actual_direction == direction
-        filtered_hits = hits.loc[mask_requested].copy()
-        if filtered_hits.empty:
-            opposite = _opposite_direction(direction)
-            opposite_count = int((actual_direction == opposite).sum())
-            if opposite_count:
-                LOGGER.info(
-                    "Q1 manager NLP: sin filas para '%s'; usando orientación '%s' con %d coincidencias",
-                    direction,
-                    opposite,
-                    opposite_count,
-                )
-                direction = opposite
-                filtered_hits = hits.loc[actual_direction == direction].copy()
-            else:
-                LOGGER.info(
-                    "Q1 manager NLP: no hay filas luego de filtrar por orientación '%s'",
-                    direction,
-                )
-                return pd.DataFrame(
-                    columns=[
-                        "timeframe",
-                        "month_id",
-                        "manager_user_id",
-                        "subordinado_user_id",
-                        "nlp_concepto_sospechoso",
-                        "nlp_concepto_crudo",
-                        "nlp_descripciones",
-                        "tx_count",
-                        "monto_total",
-                        "interpretabilidad",
-                    ]
-                )
+        if direction != "both":
+            mask_requested = actual_direction == direction
+            filtered_hits = hits.loc[mask_requested].copy()
+            if filtered_hits.empty:
+                opposite = _opposite_direction(direction)
+                opposite_count = int((actual_direction == opposite).sum())
+                if opposite_count:
+                    LOGGER.info(
+                        "Q1 manager NLP: sin filas para '%s'; usando orientación '%s' con %d coincidencias",
+                        direction,
+                        opposite,
+                        opposite_count,
+                    )
+                    direction = opposite
+                    filtered_hits = hits.loc[actual_direction == direction].copy()
+                else:
+                    LOGGER.info(
+                        "Q1 manager NLP: no hay filas luego de filtrar por orientación '%s'",
+                        direction,
+                    )
+                    return pd.DataFrame(
+                        columns=[
+                            "timeframe",
+                            "month_id",
+                            "manager_user_id",
+                            "subordinado_user_id",
+                            "nlp_concepto_sospechoso",
+                            "nlp_concepto_crudo",
+                            "direction",
+                            "nlp_descripciones",
+                            "tx_count",
+                            "monto_total",
+                            "interpretabilidad",
+                        ]
+                    )
 
-        hits = filtered_hits
-        manager_ids = manager_ids.loc[hits.index]
-        subordinate_ids = subordinate_ids.loc[hits.index]
+            hits = filtered_hits
+            manager_ids = manager_ids.loc[hits.index]
+            subordinate_ids = subordinate_ids.loc[hits.index]
+        else:
+            manager_ids = manager_ids.loc[hits.index]
+            subordinate_ids = subordinate_ids.loc[hits.index]
     else:
-        if direction == "manager_a_subordinado":
+        if fallback_direction == "manager_a_subordinado":
             manager_ids = hits[COL_SENDER_ID].astype("string")
             subordinate_ids = hits[COL_RECEIVER_ID].astype("string")
         else:
             manager_ids = hits[COL_RECEIVER_ID].astype("string")
             subordinate_ids = hits[COL_SENDER_ID].astype("string")
 
-        hits["_actual_direction"] = direction
+        hits["direction"] = fallback_direction
         LOGGER.info(
             "Q1 manager NLP: sin columna 'relacion'; se asume orientación '%s'",
-            direction,
+            fallback_direction,
         )
 
     hits["manager_user_id"] = _normalize_identifier(manager_ids)
@@ -1176,11 +1185,9 @@ def question1_manager_nlp(
             _combine_unique_texts,
         )
 
-    hits = hits.drop(columns=["_actual_direction"], errors="ignore")
-
     agg = (
         hits.groupby(
-            ["month_id", "manager_user_id", "subordinado_user_id"],
+            ["month_id", "manager_user_id", "subordinado_user_id", "direction"],
             observed=True,
         )
         .agg(**aggregations)
@@ -1197,28 +1204,8 @@ def question1_manager_nlp(
     agg["_concepto_label"] = agg["nlp_concepto_sospechoso"].apply(
         lambda values: ", ".join(values) if values else "SIN_CONCEPTO"
     )
-    if direction == "manager_a_subordinado":
-        def _build_message(row: pd.Series) -> str:
-            return (
-                f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
-                f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
-                f"{int(row.get('tx_count', 0))} pagos al subordinado "
-                f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
-                f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
-                f"{_format_float(row.get('monto_total', 0))} en monto total."
-                + (
-                    f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
-                    if str(row.get('nlp_concepto_crudo', '')).strip()
-                    else ""
-                )
-                + (
-                    f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
-                    if str(row.get('nlp_descripciones', '')).strip()
-                    else ""
-                )
-            )
-    else:
-        def _build_message(row: pd.Series) -> str:
+    def _build_message(row: pd.Series) -> str:
+        if row.get("direction") == "subordinado_a_manager":
             return (
                 f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
                 f"el subordinado {row.get('subordinado_user_id', 'sin_subordinado')} envió "
@@ -1237,6 +1224,24 @@ def question1_manager_nlp(
                     else ""
                 )
             )
+        return (
+            f"En la ventana '{timeframe}', durante {row.get('month_id', 'sin_mes')} "
+            f"el manager {row.get('manager_user_id', 'sin_manager')} envió "
+            f"{int(row.get('tx_count', 0))} pagos al subordinado "
+            f"{row.get('subordinado_user_id', 'sin_subordinado')} etiquetados como "
+            f"'{row.get('_concepto_label', 'SIN_CONCEPTO')}', acumulando "
+            f"{_format_float(row.get('monto_total', 0))} en monto total."
+            + (
+                f" Conceptos crudos detectados: {row.get('nlp_concepto_crudo', '').strip()}."
+                if str(row.get('nlp_concepto_crudo', '')).strip()
+                else ""
+            )
+            + (
+                f" Descripciones de origen: {row.get('nlp_descripciones', '').strip()}."
+                if str(row.get('nlp_descripciones', '')).strip()
+                else ""
+            )
+        )
 
     agg["interpretabilidad"] = agg.apply(_build_message, axis=1)
     agg = agg.drop(columns=["_concepto_label"])
@@ -1250,6 +1255,7 @@ def question1_manager_nlp(
         "month_id",
         "manager_user_id",
         "subordinado_user_id",
+        "direction",
         "nlp_concepto_sospechoso",
         "nlp_concepto_crudo",
         "nlp_descripciones",
