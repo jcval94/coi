@@ -12,6 +12,25 @@ La idea es que, aun si apenas estás aprendiendo sobre datos, puedas seguir los 
 ## Requisitos
 - Instalar dependencias con `pip install -r requirements.txt` (incluye pandas, numpy, seaborn, scikit-learn y scipy; estas dos últimas son opcionales si no se entrenan embeddings)
 
+## Instalación como paquete
+Si clonas el repositorio y quieres reutilizarlo como dependencia en otros proyectos, puedes instalarlo directamente con pip:
+
+```bash
+pip install .
+```
+
+Para un modo editable (útil durante el desarrollo) utiliza:
+
+```bash
+pip install -e .
+```
+
+> 💡 En entornos corporativos sin acceso saliente a PyPI asegúrate de tener
+> preinstalados los paquetes de `requirements.txt` y `setuptools` en tu
+> ambiente virtual. Si necesitas evitar el aislamiento de construcción, puedes
+> ejecutar `pip install --no-build-isolation -e .` para reutilizar las
+> dependencias ya presentes.
+
 ## Instalación en Google Colab
 1. Abre un cuaderno nuevo en [Google Colab](https://colab.research.google.com/), ve a **Entorno de ejecución → Cambiar tipo de entorno de ejecución** y confirma que usas Python ≥3.10.
 2. Descarga el código directamente desde GitHub en la carpeta de trabajo de Colab (`/content`). El siguiente bloque es reproducible cada vez que necesites partir de cero y agrupa todos los pasos opcionales y automatizados en un único fragmento de referencia:
