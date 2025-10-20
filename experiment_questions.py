@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import inspect
 import logging
 import re
@@ -101,6 +102,17 @@ NLP_CATEGORY_SYNONYMS = {
     "ALUSION_INDIRECTA": ("YA SABES", "LO PENDIENTE", "AQUELLO", "LO HABLADO"),
 }
 CONCEPT_SPLIT_PATTERN = re.compile(r"[\s,;|/]+")
+CONCEPT_LIST_PATTERN = re.compile(r"[;,|/]+")
+
+QUESTION5_FORCED_CONCEPTS: tuple[str, ...] = (
+    "SOBORNO",
+    "VIATICOS_LUJOSOS",
+    "EXTORSION",
+    "DONATIVO_CRUZADO",
+    "FAVORES_SEXUALES",
+    "REGALOS_LUJO",
+)
+QUESTION5_FORCED_CONCEPTS_SET = set(QUESTION5_FORCED_CONCEPTS)
 
 
 QUESTION_TITLES: Dict[str, str] = {
@@ -727,6 +739,52 @@ def _combine_unique_categories(values: Iterable[Any]) -> list[str]:
     return ordered
 
 
+def _normalize_forced_concept(value: Any) -> str:
+    normalized = normalize_clean_concept(value)
+    if not normalized:
+        return ""
+    canonical = re.sub(r"[^A-Z0-9]+", "_", normalized.upper()).strip("_")
+    return canonical
+
+
+def _iter_forced_concept_texts(value: Any) -> Iterable[str]:
+    if _is_blank_value(value):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if not _is_blank_value(item)]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        candidates: list[str] = []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                parsed = None
+            if isinstance(parsed, (list, tuple, set)):
+                candidates.extend(
+                    str(item) for item in parsed if not _is_blank_value(item)
+                )
+        candidates.extend(
+            segment.strip()
+            for segment in CONCEPT_LIST_PATTERN.split(text)
+            if segment.strip()
+        )
+        candidates.append(text)
+        return candidates
+    return [str(value)]
+
+
+def _forced_concepts_from_value(value: Any) -> list[str]:
+    matches: set[str] = set()
+    for candidate in _iter_forced_concept_texts(value):
+        canonical = _normalize_forced_concept(candidate)
+        if canonical in QUESTION5_FORCED_CONCEPTS_SET:
+            matches.add(canonical)
+    return sorted(matches)
+
+
 def _collect_unique_text_list(values: Iterable[Any]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -1043,11 +1101,21 @@ def question1_manager_nlp(
     )
     actual_direction = pd.Series(fallback_direction, index=hits.index, dtype="string")
     if COL_RELATION in hits.columns:
-        relation = hits[COL_RELATION].fillna("").astype(str).str.lower()
+        relation_raw = hits[COL_RELATION].fillna("").astype(str)
+
+        def _normalize_relation_token(value: str) -> str:
+            normalized = unicodedata.normalize("NFKD", value)
+            normalized = "".join(
+                char for char in normalized if not unicodedata.combining(char)
+            )
+            normalized = re.sub(r"[^A-Z0-9]+", "", normalized.upper())
+            return normalized
+
+        relation = relation_raw.map(_normalize_relation_token)
         manager_ids = hits[COL_RECEIVER_ID].astype("string")
         subordinate_ids = hits[COL_SENDER_ID].astype("string")
 
-        manager_is_sender = relation.str.contains("manager_del_receptor")
+        manager_is_sender = relation.str.contains("MANAGERDELRECEPTOR")
         manager_ids.loc[manager_is_sender] = hits.loc[
             manager_is_sender, COL_SENDER_ID
         ].astype("string")
@@ -1055,7 +1123,7 @@ def question1_manager_nlp(
             manager_is_sender, COL_RECEIVER_ID
         ].astype("string")
 
-        manager_is_receiver = relation.str.contains("manager_del_emisor")
+        manager_is_receiver = relation.str.contains("MANAGERDELEMISOR")
         actual_direction.loc[manager_is_receiver] = "subordinado_a_manager"
 
         unknown_orientation = ~(manager_is_sender | manager_is_receiver)
@@ -2212,6 +2280,20 @@ def question5_reference_reuse(
 
     work["_sender_clean"] = work[COL_SENDER_ID].replace("", pd.NA)
     work["_month_clean"] = work["month_id"].replace("", pd.NA)
+
+    forced_records: list[dict[str, Any]] = []
+    for _, row in work.iterrows():
+        record = row.to_dict()
+        forced_matches = _forced_concepts_from_value(record.get("nlp_concepto_sospechoso"))
+        if forced_matches:
+            for concept in forced_matches:
+                new_record = record.copy()
+                new_record["nlp_concepto_sospechoso"] = concept
+                forced_records.append(new_record)
+        else:
+            forced_records.append(record)
+    if forced_records:
+        work = pd.DataFrame.from_records(forced_records, columns=work.columns)
 
     def _join_unique(series: pd.Series) -> str:
         values = {
