@@ -2,6 +2,19 @@
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+
+MXN_PER_USD: float = 17.0
+MXN_PER_EUR: float = 18.5
+
+
+def _regulatory_thresholds_mxn() -> List[float]:
+    """Regresa los umbrales regulatorios expresados en pesos mexicanos."""
+
+    usd_thresholds = [1000.0 * MXN_PER_USD, 5000.0 * MXN_PER_USD]
+    eur_threshold = 5000.0 * MXN_PER_EUR
+    values = (*usd_thresholds, eur_threshold)
+    return [round(value, 2) for value in sorted(values)]
+
 @dataclass
 class Params:
     smurf_window_days: int = 7
@@ -18,7 +31,7 @@ class Params:
     burst_work_start_hour: int = 8
     burst_work_end_hour: int = 20
     burst_min_off_hours_ratio: float = 0.6
-    near_thresholds: List[float] = field(default_factory=lambda: [500, 1000, 2000, 5000, 10000])
+    near_thresholds: List[float] = field(default_factory=_regulatory_thresholds_mxn)
     near_delta: float = 10.0
     round_bases: List[int] = field(default_factory=lambda: [10, 50, 100, 500, 1000])
     quid_window_days: int = 3

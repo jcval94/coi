@@ -20,6 +20,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - guard para entornos sin
     ) from exc
 
 from coi_fraud import generate_diverse_dataset, run_pipeline
+from coi_fraud.config import P
 from coi_fraud.schemas import (
     COL_AMOUNT,
     COL_DESCRIPTION,
@@ -3500,19 +3501,7 @@ def question11_near_threshold_structuring(
     delta_estimated = "feat_delta_near_thr" not in work.columns
 
     def _estimate_delta(amounts: pd.Series) -> pd.Series:
-        thresholds = [
-            500,
-            750,
-            1000,
-            1500,
-            2000,
-            3000,
-            5000,
-            7500,
-            10000,
-            15000,
-            20000,
-        ]
+        thresholds = list(P.near_thresholds)
         diff = pd.DataFrame({thr: (amounts - thr).abs() for thr in thresholds})
         return diff.min(axis=1)
 

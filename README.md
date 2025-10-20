@@ -446,7 +446,7 @@ El módulo `experiment_questions.py` genera respuestas tabulares para siete preg
     plt.show()
     ```
 - **Q11 – Montos pegados a umbrales regulatorios** (`question11_near_threshold_structuring`):
-  - **¿Qué detecta?** Pares que mueven dinero muy cerca de límites regulatorios (500, 750, 1 000, 1 500, 2 000, 3 000, 5 000, 7 500, 10 000, 15 000 o 20 000 unidades) como si intentaran esquivar la supervisión sin pasarse del tope.
+  - **¿Qué detecta?** Pares que mueven dinero muy cerca de los límites regulatorios vigentes en pesos (≈17 000, ≈85 000 y ≈92 500), equivalentes a 1 000 USD, 5 000 USD y 5 000 EUR, como si intentaran esquivar la supervisión sin rebasar el tope.
   - **¿Cómo lo hace?** Busca la bandera `sig_near_thr` y el delta `feat_delta_near_thr`. Si faltan, calcula qué tan lejos está cada transacción del umbral más cercano y se queda con las que caen dentro del `delta_limit` (±10 por defecto). Luego agrupa por mes para ver recurrencia, montos acumulados y riesgo máximo del par.
   - **Parámetros clave:** `timeframe`; `min_months` (meses mínimos con hallazgos, 3 por defecto); `delta_limit` (diferencia máxima permitida respecto al umbral, 10.0 por defecto).
   - **Validación de umbrales:**

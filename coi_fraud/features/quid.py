@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ..config import P
 from ..schemas import COL_AMOUNT, COL_RECEIVER_ID, COL_SENDER_ID
 
 
@@ -178,7 +179,7 @@ class QuidProQuoConfig:
     window_days: int = 3
     min_score: float = 2.2
     near_thr_delta: float = 10.0
-    near_thr: Tuple[float, ...] = (500, 1000, 2000, 5000, 10000)
+    near_thr: Tuple[float, ...] = tuple(P.near_thresholds)
 
 
 class QuidProQuoDetector:
