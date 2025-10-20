@@ -40,6 +40,14 @@ from experiment_questions import (
 sns.set_theme(style="whitegrid")
 
 
+LEGEND_OUTSIDE_DEFAULT_KWARGS = {
+    "loc": "center left",
+    "bbox_to_anchor": (1.02, 0.5),
+    "borderaxespad": 0.0,
+    "frameon": False,
+}
+
+
 TIMEFRAME_LABELS = {
     "ultimo_mes": "Último mes",
     "ultimos_3_meses": "Últimos 3 meses",
@@ -84,6 +92,31 @@ def _render_empty_chart(ax: Axes, question_key: str, timeframe: str, message: st
     )
     ax.set_axis_off()
     return ax
+
+
+def _legend_outside(
+    axis: Axes,
+    *args: Any,
+    adjust_right: Optional[float] = 0.78,
+    add_artist: bool = False,
+    **kwargs: Any,
+) -> Optional[Any]:
+    """Place the legend outside of the plotting area with sensible defaults."""
+
+    if not args and axis.get_legend_handles_labels() == ([], []):
+        return None
+
+    legend_kwargs = {**LEGEND_OUTSIDE_DEFAULT_KWARGS, **kwargs}
+    legend = axis.legend(*args, **legend_kwargs)
+    if add_artist:
+        axis.add_artist(legend)
+
+    if adjust_right is not None and axis.figure is not None:
+        current_right = axis.figure.subplotpars.right
+        if current_right > adjust_right:
+            axis.figure.subplots_adjust(right=adjust_right)
+
+    return legend
 
 
 def plot_q1_manager_nlp(
@@ -169,20 +202,9 @@ def plot_q1_manager_nlp(
     _apply_plot_metadata(axis, "q1_manager_nlp", timeframe)
     axis.set_xlabel("Número de transacciones")
     axis.set_ylabel(y_label)
-    legend = axis.get_legend()
-    if legend is not None:
+    if axis.get_legend() is not None:
         handles, labels = axis.get_legend_handles_labels()
-        axis.legend(
-            handles,
-            labels,
-            title="Concepto",
-            loc="center left",
-            bbox_to_anchor=(1.02, 0.5),
-            borderaxespad=0.0,
-            frameon=False,
-        )
-        if axis.figure is not None:
-            axis.figure.subplots_adjust(right=0.78)
+        _legend_outside(axis, handles, labels, title="Concepto")
     return axis
 
 
@@ -216,7 +238,7 @@ def plot_q2_manager_concepts(
         plot_kwargs["hue"] = "month_id"
     sns.barplot(**plot_kwargs)
     if axis.get_legend() is not None:
-        axis.legend(title="Mes")
+        _legend_outside(axis, title="Mes")
     _apply_plot_metadata(axis, "q2_manager_concepts", timeframe)
     axis.set_xlabel("P95 de risk_score")
     axis.set_ylabel("Concepto NLP")
@@ -280,7 +302,7 @@ def plot_q3_quid_pairs(
     _apply_plot_metadata(axis, "q3_quid_pairs", timeframe)
     axis.set_xlabel("Puntaje más alto de 'algo por algo'")
     axis.set_ylabel("Par emisor → receptor")
-    axis.legend(title="Movimientos detectados")
+    _legend_outside(axis, title="Movimientos detectados")
     return axis
 
 
@@ -386,7 +408,7 @@ def plot_q4_negative_value_vs_load(
         plot_kwargs["hue"] = "feat_quid_score"
     sns.barplot(**plot_kwargs)
     if axis.get_legend() is not None:
-        axis.legend(title="Puntaje")
+        _legend_outside(axis, title="Puntaje")
     _apply_plot_metadata(axis, "q4_quid_negative_value_vs_load", timeframe)
     axis.set_xlabel("Días (negativos = autorización previa)")
     axis.set_ylabel("Par emisor → receptor")
@@ -521,7 +543,7 @@ def plot_q6_centralizers(
         ax=axis,
     )
     if axis.get_legend() is not None:
-        axis.legend(title="Receptor")
+        _legend_outside(axis, title="Receptor")
     _apply_plot_metadata(axis, "q6_centralizers", timeframe)
     axis.set_xlabel("Mes")
     axis.set_ylabel("Centralidad (inflow × emisores únicos)")
@@ -591,7 +613,7 @@ def plot_q8_case13_new_employees(
     _apply_plot_metadata(axis, "q8_case13_new_employees", timeframe)
     axis.set_xlabel("Monto total recibido")
     axis.set_ylabel("Receptor")
-    axis.legend(title="Tx monto alto")
+    _legend_outside(axis, title="Tx monto alto")
     return axis
 
 
@@ -629,7 +651,7 @@ def plot_q9_case14_veterans_from_newcomers(
     _apply_plot_metadata(axis, "q9_case14_veterans_from_newcomers", timeframe)
     axis.set_xlabel("Monto recibido desde emisores nuevos")
     axis.set_ylabel("Receptor veterano")
-    axis.legend(title="Emisores únicos")
+    _legend_outside(axis, title="Emisores únicos")
     return axis
 
 
@@ -703,14 +725,16 @@ def plot_q10_yoyo_streaks(
     ]
     size_labels = [f"{int(round(val))} tx" for val in size_ticks]
     if size_handles:
-        size_legend = axis.legend(
+        _legend_outside(
             size_handles,
             size_labels,
             title="Transacciones Yo-Yo",
-            loc="lower right",
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.2),
             frameon=True,
+            adjust_right=0.8,
+            add_artist=True,
         )
-        axis.add_artist(size_legend)
 
     racha_min = float(work["racha_max_yo_yo"].min())
     racha_max = float(work["racha_max_yo_yo"].max())
@@ -775,7 +799,7 @@ def plot_q11_near_threshold_structuring(
     _apply_plot_metadata(axis, "q11_near_threshold_structuring", timeframe)
     axis.set_xlabel("Meses con montos cercanos")
     axis.set_ylabel("Par emisor → receptor")
-    axis.legend(title="Riesgo máximo")
+    _legend_outside(axis, title="Riesgo máximo")
     return axis
 
 
@@ -815,7 +839,7 @@ def plot_q12_smurfing_chronic(
     _apply_plot_metadata(axis, "q12_smurfing_chronic", timeframe)
     axis.set_xlabel("Monto total fraccionado")
     axis.set_ylabel("Par emisor → receptor")
-    axis.legend(title="Riesgo máximo", loc="best")
+    _legend_outside(axis, title="Riesgo máximo")
     return axis
 
 
@@ -853,7 +877,7 @@ def plot_q13_bad_loans_with_frequency(
     _apply_plot_metadata(axis, "q13_bad_loans_with_frequency", timeframe)
     axis.set_xlabel("Monto en préstamos incumplidos")
     axis.set_ylabel("Par emisor → receptor")
-    axis.legend(title="Eventos alta frecuencia")
+    _legend_outside(axis, title="Eventos alta frecuencia")
     return axis
 
 
@@ -893,7 +917,7 @@ def plot_q14_recurrent_payroll(
     _apply_plot_metadata(axis, "q14_recurrent_payroll", timeframe)
     axis.set_xlabel("Monto total pagado")
     axis.set_ylabel("Emisor → Receptor")
-    axis.legend(title="Meses recurrentes")
+    _legend_outside(axis, title="Meses recurrentes")
     return axis
 
 
@@ -1056,7 +1080,7 @@ def plot_q16_multisignal_transactions(
     _apply_plot_metadata(axis, "q16_multisignal_transactions", timeframe)
     axis.set_xlabel("Monto transaccionado")
     axis.set_ylabel("Riesgo (risk_score)")
-    axis.legend(title="Señales activas", loc="best")
+    _legend_outside(axis, title="Señales activas")
     return axis
 
 
@@ -1149,7 +1173,7 @@ def plot_q17_nlp_person_profiles(
     _apply_plot_metadata(axis, "q17_nlp_person_profiles", timeframe)
     axis.set_xlabel("Score probable COI (mayor es más riesgoso)")
     axis.set_ylabel("Persona")
-    axis.legend(title="Riesgo promedio")
+    _legend_outside(axis, title="Riesgo promedio")
     return axis
 
 
@@ -1252,7 +1276,7 @@ def plot_q18_user_risk_scores(
     _apply_plot_metadata(axis, "q18_user_risk_scores", timeframe)
     axis.set_xlabel("Riesgo promedio de la persona")
     axis.set_ylabel("Persona priorizada")
-    axis.legend(title="Nivel de riesgo", loc="best")
+    _legend_outside(axis, title="Nivel de riesgo")
     return axis
 
 
