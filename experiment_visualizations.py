@@ -171,7 +171,18 @@ def plot_q1_manager_nlp(
     axis.set_ylabel(y_label)
     legend = axis.get_legend()
     if legend is not None:
-        legend.set_title("Concepto")
+        handles, labels = axis.get_legend_handles_labels()
+        axis.legend(
+            handles,
+            labels,
+            title="Concepto",
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            borderaxespad=0.0,
+            frameon=False,
+        )
+        if axis.figure is not None:
+            axis.figure.subplots_adjust(right=0.78)
     return axis
 
 

@@ -131,3 +131,38 @@ def test_question1_manager_nlp_fallbacks_to_detected_direction() -> None:
     assert row["manager_user_id"] == "MGR-321"
     assert row["subordinado_user_id"] == "EMP-500"
     assert row["direction"] == "subordinado_a_manager"
+
+
+def test_question1_manager_nlp_normalizes_relation_value() -> None:
+    """Normaliza valores de ``relacion`` con espacios y mayúsculas."""
+
+    df = pd.DataFrame(
+        [
+            {
+                "month_id": "2024-07",
+                COL_SENDER_ID: "EMP-777",
+                COL_RECEIVER_ID: "MGR-888",
+                COL_AMOUNT: 3_000.0,
+                COL_DESCRIPTION: "Transferencia con indicio de soborno",
+                COL_RELATION: "Manager del Emisor",
+                "nlp_concepto_sospechoso": "SOBORNO",
+            },
+            {
+                "month_id": "2024-07",
+                COL_SENDER_ID: "MGR-555",
+                COL_RECEIVER_ID: "EMP-444",
+                COL_AMOUNT: 1_100.0,
+                COL_DESCRIPTION: "Transferencia con indicio de soborno",
+                COL_RELATION: "manager-del-receptor",
+                "nlp_concepto_sospechoso": "SOBORNO",
+            },
+        ]
+    )
+    reports = {"transaccion": {DEFAULT_TIMEFRAME: df}}
+
+    result = question1_manager_nlp(reports, timeframe=DEFAULT_TIMEFRAME)
+
+    assert set(result["direction"]) == {
+        "subordinado_a_manager",
+        "manager_a_subordinado",
+    }

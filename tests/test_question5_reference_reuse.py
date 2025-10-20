@@ -57,3 +57,25 @@ def test_question5_reference_reuse_to_csv_roundtrip(tmp_path):
     csv_output = buffer.getvalue()
     assert "conceptos_crudos" in csv_output
     assert "Pago extra" in csv_output
+
+
+def test_question5_reference_reuse_forced_concepts_are_expanded():
+    concept_text = "['SOBORNO', 'FAVORES SEXUALES']"
+    transactions = pd.DataFrame(
+        {
+            COL_SENDER_ID: ["S1", "S2", "S3"],
+            COL_RECEIVER_ID: ["R1", "R1", "R1"],
+            "nlp_concepto_sospechoso": [concept_text] * 3,
+            COL_AMOUNT: [100.0, 150.0, 200.0],
+            "month_id": ["2024-01", "2024-02", "2024-03"],
+        }
+    )
+
+    result = question5_reference_reuse(_build_reports(transactions), DEFAULT_TIMEFRAME)
+
+    assert not result.empty
+    concepts = set(result["nlp_concepto_sospechoso"].tolist())
+    assert {"SOBORNO", "FAVORES_SEXUALES"}.issubset(concepts)
+    expanded = result.loc[result["nlp_concepto_sospechoso"] == "SOBORNO"].iloc[0]
+    assert expanded["emisores_unicos"] == 3
+    assert expanded["tx_count"] == 3
