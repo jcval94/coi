@@ -1454,6 +1454,7 @@ def question3_quid_pairs(
         "quid_tx_first_fecha",
         "quid_tx_last_fecha",
         "quid_tx_relaciones",
+        "quid_tx_conceptos",
         "quid_top_tx_fecha",
         "quid_top_tx_monto",
         "quid_top_tx_score",
@@ -1486,6 +1487,7 @@ def question3_quid_pairs(
         "quid_tx_first_fecha": "fecha_del_primer_movimiento_relacionado",
         "quid_tx_last_fecha": "fecha_del_ultimo_movimiento_relacionado",
         "quid_tx_relaciones": "tipos_de_relacion_observados_entre_las_personas",
+        "quid_tx_conceptos": "conceptos_detectados_en_los_movimientos",
         "quid_top_tx_fecha": "ejemplo_clave_fecha_del_movimiento",
         "quid_top_tx_monto": "ejemplo_clave_monto_del_movimiento",
         "quid_top_tx_score": "ejemplo_clave_puntaje_algo_por_algo",
@@ -1616,6 +1618,83 @@ def question3_quid_pairs(
     for column in bool_pair_columns:
         if column in pair_df.columns:
             pair_df[column] = pair_df[column].astype("object")
+
+    concept_pair_column = "quid_tx_conceptos"
+
+    if concept_pair_column not in pair_df.columns:
+        pair_df[concept_pair_column] = [[] for _ in range(len(pair_df))]
+
+    def _concept_list_from_value(value: Any) -> list[str]:
+        if value is None or value is pd.NA:
+            return []
+        if isinstance(value, float) and pd.isna(value):
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return [
+                str(item).strip()
+                for item in value
+                if str(item).strip() and str(item).strip().lower() != "nan"
+            ]
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return []
+        return [text]
+
+    if (
+        not pair_df.empty
+        and not base_tx.empty
+        and {COL_SENDER_ID, COL_RECEIVER_ID}.issubset(base_tx.columns)
+    ):
+        concept_columns = [
+            column
+            for column in ("nlp_concepto_sospechoso", "nlp_concepto_crudo")
+            if column in base_tx.columns
+        ]
+
+        if concept_columns:
+            concept_frames: list[pd.DataFrame] = []
+            for column in concept_columns:
+                column_work = base_tx[[COL_SENDER_ID, COL_RECEIVER_ID]].copy()
+                column_work["_concepto_tx"] = base_tx[column].apply(
+                    _concept_list_from_value
+                )
+                column_work = column_work.explode("_concepto_tx")
+                if "_concepto_tx" not in column_work.columns:
+                    continue
+                column_work = column_work.loc[
+                    column_work["_concepto_tx"].astype(str).str.strip() != ""
+                ]
+                column_work["_pair_key"] = (
+                    column_work[COL_SENDER_ID].astype(str)
+                    + "->"
+                    + column_work[COL_RECEIVER_ID].astype(str)
+                )
+                concept_frames.append(column_work[["_pair_key", "_concepto_tx"]])
+
+            if concept_frames:
+                combined_concepts = pd.concat(concept_frames, ignore_index=True)
+                if not combined_concepts.empty:
+                    grouped_concepts = (
+                        combined_concepts.groupby("_pair_key", observed=True)
+                        ["_concepto_tx"]
+                        .agg(lambda values: _collect_unique_text_list(values.tolist()))
+                    )
+                    pair_df[concept_pair_column] = pair_df["quid_pair_clave"].map(
+                        grouped_concepts
+                    )
+
+    def _wrap_concept_values(value: Any) -> Iterable[Any]:
+        if value is None or value is pd.NA:
+            return []
+        if isinstance(value, float) and pd.isna(value):
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return value
+        return [value]
+
+    pair_df[concept_pair_column] = pair_df[concept_pair_column].apply(
+        lambda value: _collect_unique_text_list(_wrap_concept_values(value))
+    )
 
     tx_columns = [
         "fecha_hora_ts",
