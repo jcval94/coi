@@ -92,6 +92,13 @@ def test_question18_handles_alias_columns(monkeypatch):
         "sum_emit",
         "sum_recv",
         "banderas_destacadas",
+        "bandera_manager_nlp",
+        "casuistica_score_total_todas_temporalidades",
     }.issubset(result.columns)
+    assert (
+        persona_p1["casuistica_score_total_todas_temporalidades"]
+        == persona_p1["casuistica_score_total"]
+    )
+    assert persona_p1["bandera_manager_nlp"] == "SIN_ALERTA"
     detalle = persona_p1["detalle_pagos_mensuales"]
     assert isinstance(detalle, list) and len(detalle) == 1

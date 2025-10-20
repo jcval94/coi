@@ -4910,7 +4910,11 @@ def question17_nlp_person_profiles(
 
 
 def question18_user_risk_scores(
-    reports: Mapping[str, Any], timeframe: str = DEFAULT_TIMEFRAME, top_n: int = 25
+    reports: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+    top_n: int | None = 25,
+    *,
+    include_all_timeframes_total: bool = True,
 ) -> pd.DataFrame:
     """Prioriza personas por riesgo promedio, desbalance y señales activas."""
 
@@ -6346,7 +6350,9 @@ def question18_user_risk_scores(
     scenario_metadata = {
         "manager_nlp": {
             "label": "NLP manager-subordinado",
-            "weight": 1.1,
+            "weight": 10.0,
+            "risk_rating": 10,
+            "flag_label": "BANDERA ROJA",
             "score_col": "score_manager_nlp",
             "tier_col": "tier_manager_nlp",
             "detail_col": "detalle_manager_nlp",
@@ -6364,7 +6370,9 @@ def question18_user_risk_scores(
         },
         "manager_concepts": {
             "label": "Conceptos NLP severos",
-            "weight": 0.9,
+            "weight": 9.0,
+            "risk_rating": 9,
+            "flag_label": "BANDERA ROJA",
             "score_col": "score_manager_concepts",
             "tier_col": "tier_manager_concepts",
             "detail_col": "detalle_manager_concepts",
@@ -6380,7 +6388,9 @@ def question18_user_risk_scores(
         },
         "quid_pairs": {
             "label": "Quid pro quo",
-            "weight": 1.2,
+            "weight": 10.0,
+            "risk_rating": 10,
+            "flag_label": "BANDERA ROJA",
             "score_col": "score_quid_pairs",
             "tier_col": "tier_quid_pairs",
             "detail_col": "detalle_quid_pairs",
@@ -6397,7 +6407,9 @@ def question18_user_risk_scores(
         },
         "quid_value_vs_load": {
             "label": "Valor vs carga",
-            "weight": 1.0,
+            "weight": 8.0,
+            "risk_rating": 8,
+            "flag_label": "ALTO RIESGO",
             "score_col": "score_quid_value_vs_load",
             "tier_col": "tier_quid_value_vs_load",
             "detail_col": "detalle_quid_value_vs_load",
@@ -6425,7 +6437,9 @@ def question18_user_risk_scores(
         },
         "reference_reuse": {
             "label": "Referencias reutilizadas",
-            "weight": 1.0,
+            "weight": 7.0,
+            "risk_rating": 7,
+            "flag_label": "ALTO RIESGO",
             "score_col": "score_reference_reuse",
             "tier_col": "tier_reference_reuse",
             "detail_col": "detalle_reference_reuse",
@@ -6446,7 +6460,9 @@ def question18_user_risk_scores(
         },
         "centralizer": {
             "label": "Centralizadores",
-            "weight": 1.1,
+            "weight": 7.0,
+            "risk_rating": 7,
+            "flag_label": "BANDERA AMARILLA",
             "score_col": "score_centralizer",
             "tier_col": "tier_centralizer",
             "detail_col": "detalle_centralizer",
@@ -6467,7 +6483,9 @@ def question18_user_risk_scores(
         },
         "net_imbalance": {
             "label": "Desbalance neto",
-            "weight": 1.4,
+            "weight": 3.0,
+            "risk_rating": 3,
+            "flag_label": "INDICADOR CONTEXTO",
             "score_col": "score_net_imbalance",
             "tier_col": "tier_net_imbalance",
             "detail_col": "detalle_net_imbalance",
@@ -6488,7 +6506,9 @@ def question18_user_risk_scores(
         },
         "case13": {
             "label": "Receptores nuevos (Caso 13)",
-            "weight": 1.3,
+            "weight": 6.0,
+            "risk_rating": 6,
+            "flag_label": "BANDERA AMARILLA",
             "score_col": "score_case13",
             "tier_col": "tier_case13",
             "detail_col": "detalle_case13",
@@ -6505,7 +6525,9 @@ def question18_user_risk_scores(
         },
         "case14": {
             "label": "Veteranos desde nuevos (Caso 14)",
-            "weight": 1.2,
+            "weight": 9.0,
+            "risk_rating": 9,
+            "flag_label": "BANDERA ROJA",
             "score_col": "score_case14",
             "tier_col": "tier_case14",
             "detail_col": "detalle_case14",
@@ -6522,7 +6544,9 @@ def question18_user_risk_scores(
         },
         "yoyo": {
             "label": "Rachas yo-yo",
-            "weight": 1.0,
+            "weight": 8.0,
+            "risk_rating": 8,
+            "flag_label": "ALTO RIESGO",
             "score_col": "score_yoyo",
             "tier_col": "tier_yoyo",
             "detail_col": "detalle_yoyo",
@@ -6540,7 +6564,9 @@ def question18_user_risk_scores(
         },
         "near_threshold": {
             "label": "Cercanía a umbral",
-            "weight": 0.9,
+            "weight": 6.0,
+            "risk_rating": 6,
+            "flag_label": "BANDERA AMARILLA",
             "score_col": "score_near_threshold",
             "tier_col": "tier_near_threshold",
             "detail_col": "detalle_near_threshold",
@@ -6562,7 +6588,9 @@ def question18_user_risk_scores(
         },
         "smurfing": {
             "label": "Fraccionamiento crónico",
-            "weight": 1.4,
+            "weight": 9.0,
+            "risk_rating": 9,
+            "flag_label": "BANDERA ROJA",
             "score_col": "score_smurfing",
             "tier_col": "tier_smurfing",
             "detail_col": "detalle_smurfing",
@@ -6584,7 +6612,9 @@ def question18_user_risk_scores(
         },
         "bad_loans": {
             "label": "Préstamos impagos",
-            "weight": 1.3,
+            "weight": 8.0,
+            "risk_rating": 8,
+            "flag_label": "ALTO RIESGO",
             "score_col": "score_bad_loans",
             "tier_col": "tier_bad_loans",
             "detail_col": "detalle_bad_loans",
@@ -6608,7 +6638,9 @@ def question18_user_risk_scores(
         },
         "recurrent_payroll": {
             "label": "Pagos recurrentes",
-            "weight": 1.2,
+            "weight": 8.0,
+            "risk_rating": 8,
+            "flag_label": "ALTO RIESGO",
             "score_col": "score_recurrent_payroll",
             "tier_col": "tier_recurrent_payroll",
             "detail_col": "detalle_recurrent_payroll",
@@ -6633,6 +6665,7 @@ def question18_user_risk_scores(
     }
 
     scenario_columns_order: list[str] = []
+    flag_columns: list[str] = []
     for key, meta in scenario_metadata.items():
         scenario_df = scenario_frames.get(key, pd.DataFrame())
         expected_cols = ["persona"] + meta["columns"]
@@ -6658,11 +6691,24 @@ def question18_user_risk_scores(
         detail_col = meta.get("detail_col")
         if detail_col and detail_col in work.columns:
             work[detail_col] = work[detail_col].fillna("sin_detalle").astype(str)
+        flag_label = meta.get("flag_label")
+        risk_rating = meta.get("risk_rating")
+        flag_col = f"bandera_{key}"
+        flag_series = pd.Series("SIN_ALERTA", index=work.index, dtype="object")
+        if flag_label:
+            label_text = (
+                f"{flag_label} ({risk_rating})"
+                if risk_rating is not None
+                else str(flag_label)
+            )
+            flag_series.loc[work[score_col] > 1] = label_text
+        work[flag_col] = flag_series
+        flag_columns.append(flag_col)
         scenario_columns_order.extend(
             [col for col in meta["columns"] if col not in scenario_columns_order]
         )
 
-    total_weight = sum(item["weight"] for item in scenario_metadata.values())
+    total_weight = sum(float(item["weight"]) for item in scenario_metadata.values())
     work["casuistica_score_total"] = 0.0
     for meta in scenario_metadata.values():
         work["casuistica_score_total"] += work[meta["score_col"]] * meta["weight"]
@@ -6699,6 +6745,60 @@ def question18_user_risk_scores(
     for col in scenario_columns_order:
         if col not in columns:
             columns.append(col)
+    for col in flag_columns:
+        if col not in columns:
+            columns.append(col)
+
+    if include_all_timeframes_total:
+        persona_series = work.get("persona", pd.Series(dtype="object")).astype(str)
+        base_scores = pd.to_numeric(
+            work.get("casuistica_score_total", 0.0), errors="coerce"
+        ).fillna(0.0)
+        totals_map: dict[str, float] = {
+            persona: float(score)
+            for persona, score in zip(persona_series, base_scores)
+        }
+        persona_section = reports.get("persona") if isinstance(reports, Mapping) else None
+        timeframe_keys: Iterable[Any]
+        if isinstance(persona_section, Mapping):
+            timeframe_keys = persona_section.keys()
+        else:
+            timeframe_keys = []
+        seen_timeframes: set[str] = set()
+        current_key = str(timeframe)
+        for tf_candidate in timeframe_keys:
+            tf_key = str(tf_candidate)
+            if tf_key in seen_timeframes:
+                continue
+            seen_timeframes.add(tf_key)
+            if tf_key == current_key:
+                continue
+            tf_result = question18_user_risk_scores(
+                reports,
+                timeframe=tf_candidate,
+                top_n=None,
+                include_all_timeframes_total=False,
+            )
+            if tf_result.empty or "persona" not in tf_result.columns:
+                continue
+            if "casuistica_score_total" not in tf_result.columns:
+                continue
+            tf_scores = tf_result[["persona", "casuistica_score_total"]].copy()
+            tf_scores["persona"] = tf_scores["persona"].astype(str)
+            tf_scores["casuistica_score_total"] = pd.to_numeric(
+                tf_scores["casuistica_score_total"], errors="coerce"
+            ).fillna(0.0)
+            for persona, score in tf_scores.itertuples(index=False):
+                totals_map[persona] = totals_map.get(persona, 0.0) + float(score)
+        total_series = persona_series.map(totals_map).fillna(base_scores)
+        work["casuistica_score_total_todas_temporalidades"] = total_series.astype(float)
+    else:
+        work["casuistica_score_total_todas_temporalidades"] = pd.to_numeric(
+            work.get("casuistica_score_total", 0.0), errors="coerce"
+        ).fillna(0.0)
+
+    if "casuistica_score_total_todas_temporalidades" not in columns:
+        columns.append("casuistica_score_total_todas_temporalidades")
 
     flag_rate_cols = {
         "yo_yo_persona_tasa_flag_emisor": "yo-yo",
@@ -6768,7 +6868,18 @@ def question18_user_risk_scores(
             "flags_activas",
         ],
         ascending=[False, False, False, False, False],
-    ).head(max(1, int(top_n)))
+    )
+
+    if top_n is not None:
+        try:
+            top_limit = int(top_n)
+        except (TypeError, ValueError):
+            top_limit = 0
+        if top_limit <= 0:
+            limit = len(work)
+        else:
+            limit = max(1, top_limit)
+        work = work.head(limit)
     work["ranking_prioridad"] = list(range(1, len(work) + 1))
 
     def _direction(value: float) -> str:
